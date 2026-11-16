@@ -572,16 +572,8 @@ export class TypeScriptSkillSolver implements ISkillSolver {
   }
 
   private formatRecommendationReason(option: DpOption): string | undefined {
-    if (option.isLocked && option.evoDetail) {
-      return option.evoDetail.slotType === 'scenario'
-        ? '必須取得（ロック中）・シナリオ進化前提'
-        : '必須取得（ロック中）・自前進化前提';
-    }
     if (option.isLocked) {
       return '必須取得（ロック中）';
-    }
-    if (option.evoDetail) {
-      return option.evoDetail.slotType === 'scenario' ? 'シナリオ進化前提' : '自前進化前提';
     }
     return undefined;
   }

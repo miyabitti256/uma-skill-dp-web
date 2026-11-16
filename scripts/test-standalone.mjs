@@ -5,6 +5,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { ImageRecognizer } from '../src/worker/imageRecognizer.ts';
+import { RecognitionAggregator } from '../src/worker/recognitionAggregator.ts';
 import { RecognitionWorkerPool, determineWorkerPoolSize } from '../src/worker/recognitionWorkerPool.ts';
 import { CaptureManager } from '../src/capture/captureManager.ts';
 import { TypeScriptSkillSolver } from '../src/solver/skillSolver.ts';
@@ -932,6 +933,7 @@ describe('TypeScriptSkillSolver 12-State Evolution DP & Same-Group Exclusivity',
     assert.equal(resChara.totalAdditionalGrade, 633, 'Must not double-count chara evolution bonus');
     assert.equal(resChara.maxGradeValue, 633);
     assert.equal(resChara.recommendedSkills[0].effectiveGrade, 633);
+    assert.equal(resChara.recommendedSkills[0].reason, undefined, 'Recommended skill must not display 自前進化前提 label');
     const lv5Rec = resChara.evolutionRecommendations.find((e) => e.slotType === 'chara_lv5');
     assert.ok(lv5Rec && lv5Rec.canEvolve && lv5Rec.baseSkillId === 200511);
 
@@ -951,10 +953,11 @@ describe('TypeScriptSkillSolver 12-State Evolution DP & Same-Group Exclusivity',
     );
     assert.equal(resScen.totalAdditionalGrade, 633, 'Must not double-count scenario evolution bonus');
     assert.equal(resScen.maxGradeValue, 633);
+    assert.equal(resScen.recommendedSkills[0].reason, undefined, 'Recommended skill must not display シナリオ進化前提 label');
     const scenRec = resScen.evolutionRecommendations.find((e) => e.slotType === 'scenario');
     assert.ok(scenRec && scenRec.canEvolve && scenRec.baseSkillId === 202721);
 
-    // 3. ロック中金スキルも進化を反映しつつ二重加算しない
+    // 3. ロック中金スキルも進化を反映しつつ二重加算しない（進化前提ラベルなし）
     const goldLocked = makeDetectedSkill(200511, { recognizedCost: 200, isLocked: true });
     const resLocked = solver.solve([goldLocked], {
       availableSp: 200,
@@ -966,6 +969,62 @@ describe('TypeScriptSkillSolver 12-State Evolution DP & Same-Group Exclusivity',
     assert.equal(resLocked.totalAdditionalGrade, 633);
     assert.equal(resLocked.maxGradeValue, 633);
     assert.equal(resLocked.recommendedSkills[0].effectiveGrade, 633);
+    assert.equal(resLocked.recommendedSkills[0].reason, '必須取得（ロック中）');
+  });
+
+  test('keeps gold/circle/double costs and DP maxGradeValue invariant across repeated up/down scroll scans', () => {
+    // What: Scrolling back and forth with single-frame edge OCR noise on rarity=2 (機転: 324 vs 224),
+    // rarity=1 ○/◎ sync (良バ場○: 63 vs 67), or 1-frame pink blur must not mutate confirmed costs/states or DP grade.
+    // Also a real direct ◎ sighting must replace a synthetic ◎ cost created when ○ was seen selected above it.
+    const agg = new RecognitionAggregator(masterStore);
+    const solver = new TypeScriptSkillSolver(masterStore);
+    const makeFrame = (cards) => ({
+      screenType: 'スキル獲得説明省略表示',
+      screenMode: 'compact',
+      skillPoint: 600,
+      cards: cards.map((c) => ({
+        dist: 120,
+        box: { top: 500, bottom: 590, height: 90 },
+        ...c,
+      })),
+    });
+
+    // Pass 1 (down): 良バ場○(63) -> 良バ場◎(77) と 機転(324) を確定
+    agg.processOutput(makeFrame([{ skillId: 200152, name: '良バ場○', needSp: 63, state: 'unselected' }]));
+    const afterPass1 = agg.processOutput(makeFrame([{ skillId: 204731, name: '機転', needSp: 324, state: 'unselected' }]));
+
+    const resPass1 = solver.solve(afterPass1.detectedSkills, {
+      availableSp: 400,
+      aptitudes: defaultAptitudes,
+    });
+
+    // Pass 2 (up/down scroll with edge digit noise & 1-frame pink blur)
+    agg.processOutput(makeFrame([{ skillId: 204731, name: '機転', needSp: 224, state: 'unselected' }]));
+    agg.processOutput(makeFrame([{ skillId: 200152, name: '良バ場○', needSp: 67, state: 'unselected' }]));
+    const afterPass2 = agg.processOutput(
+      makeFrame([{ skillId: 204731, name: '機転', needSp: 0, state: 'selected' }])
+    );
+
+    const kiten = afterPass2.detectedSkills.find((s) => s.id === 204731);
+    const ryouDouble = afterPass2.detectedSkills.find((s) => s.id === 200151);
+    assert.equal(kiten?.recognizedCost, 324, 'Gold skill 機転 cost must remain locked against scroll edge noise');
+    assert.equal(kiten?.state, 'unselected', 'Single-frame pink blur must not flip skill state');
+    assert.equal(ryouDouble?.recognizedCost, 77, 'Synthesized 良バ場◎ cost must not drift on 良バ場○ re-scan');
+
+    const resPass2 = solver.solve(afterPass2.detectedSkills, {
+      availableSp: 400,
+      aptitudes: defaultAptitudes,
+    });
+    assert.equal(resPass2.maxGradeValue, resPass1.maxGradeValue, 'DP maxGradeValue must stay invariant on re-scroll');
+
+    // Separate session: selected ○ (needSp=0) above real discounted ◎ (needSp=77)
+    const agg2 = new RecognitionAggregator(masterStore);
+    agg2.processOutput(makeFrame([{ skillId: 200152, name: '良バ場○', needSp: 0, state: 'selected' }]));
+    const afterDirectDouble = agg2.processOutput(
+      makeFrame([{ skillId: 200151, name: '良バ場◎', needSp: 77, state: 'unselected' }])
+    );
+    const realDouble = afterDirectDouble.detectedSkills.find((s) => s.id === 200151);
+    assert.equal(realDouble?.recognizedCost, 77, 'Direct ◎ sighting must override synthetic default cost from selected ○');
   });
 
   test('selects optimal 2 scenario evolutions when 3+ scenario-evolvable candidates exist', () => {

@@ -4,6 +4,7 @@ import type {
   AptitudeState,
   DetectedSkillItem,
   ScreenMode,
+  SkillState,
 } from '../types/recognition.ts';
 import type { RecognitionOutput } from './imageRecognizer.ts';
 
@@ -35,6 +36,13 @@ export class RecognitionAggregator {
 
   private cachedSkillsArray: DetectedSkillItem[] = [];
   private skillsDirty = true;
+  private skillMeta = new Map<
+    number,
+    {
+      synthetic: boolean;
+      stateCandidate?: { val: SkillState; count: number; lastFrame: number };
+    }
+  >();
 
   constructor(masterStore: MasterStore) {
     this.masterStore = masterStore;
@@ -42,6 +50,7 @@ export class RecognitionAggregator {
 
   public reset(): void {
     this.accumulatedSkills.clear();
+    this.skillMeta.clear();
     this.cachedSkillsArray = [];
     this.skillsDirty = true;
     this.lastValidCardId = undefined;
@@ -51,6 +60,45 @@ export class RecognitionAggregator {
     this.candidateSkillPoint = undefined;
     this.nextRecognitionOrder = 1;
     this.frameCount = 0;
+  }
+
+  private resolveSkillState(
+    skillId: number,
+    rawState: SkillState,
+    existing: DetectedSkillItem | undefined,
+    isStaticImage: boolean
+  ): SkillState {
+    if (!existing || isStaticImage || rawState === existing.state) {
+      const meta = this.skillMeta.get(skillId);
+      if (meta) meta.stateCandidate = undefined;
+      return rawState;
+    }
+
+    const meta = this.skillMeta.get(skillId) ?? { synthetic: false };
+    const cand = meta.stateCandidate;
+    if (cand && cand.val === rawState && this.frameCount - cand.lastFrame <= 6) {
+      cand.count++;
+      cand.lastFrame = this.frameCount;
+      if (cand.count >= 2) {
+        meta.stateCandidate = undefined;
+        this.skillMeta.set(skillId, meta);
+        return rawState;
+      }
+      this.skillMeta.set(skillId, meta);
+      return existing.state;
+    }
+
+    meta.stateCandidate = { val: rawState, count: 1, lastFrame: this.frameCount };
+    this.skillMeta.set(skillId, meta);
+    return existing.state;
+  }
+
+  private unlockGoldCostsInGroup(groupId: number): void {
+    for (const [id, skill] of this.accumulatedSkills) {
+      if (skill.groupId === groupId && skill.rarity === 2) {
+        this.skillMeta.set(id, { ...this.skillMeta.get(id), synthetic: true });
+      }
+    }
   }
 
   public processOutput(
@@ -163,12 +211,14 @@ export class RecognitionAggregator {
           for (const [accId, acc] of this.accumulatedSkills.entries()) {
             if (accId >= 900000 && accId < 1000000 && acc.name === card.name) {
               this.accumulatedSkills.delete(accId);
+              this.skillMeta.delete(accId);
               this.skillsDirty = true;
             }
           }
         }
 
         const existing = this.accumulatedSkills.get(card.skillId);
+        const existingMeta = this.skillMeta.get(card.skillId);
 
         const baseCost = master ? master.needSkillPoint : card.needSp;
         const gradeValue = master ? master.gradeValue : 0;
@@ -176,10 +226,24 @@ export class RecognitionAggregator {
         const groupRate = master ? master.groupRate : 1;
 
         // 固有スキル（最初から獲得済み）の強制獲得済化
-        let cardState = card.state;
+        let rawState = card.state;
         const isUniqueSkill = master && (master.rarity >= 3 || master.needSkillPoint === 0);
         if (isUniqueSkill && card.needSp === 0) {
-          cardState = 'acquired';
+          rawState = 'acquired';
+        }
+        const cardState = this.resolveSkillState(card.skillId, rawState, existing, isStaticImage);
+
+        if (existing && existing.state !== cardState) {
+          this.unlockGoldCostsInGroup(groupId);
+        }
+
+        // 全レアリティで確定コストをロック（直接未観測の合成◎およびシブリング状態変化時のみ更新許可）
+        const isSynthetic = existingMeta?.synthetic ?? false;
+        let recognizedCost: number;
+        if (existing && !isSynthetic && (existing.recognizedCost > 0 || card.needSp === 0)) {
+          recognizedCost = existing.recognizedCost;
+        } else {
+          recognizedCost = card.needSp > 0 ? card.needSp : existing ? existing.recognizedCost : baseCost;
         }
 
         // ○ と ◎ の連動認識 & 自動同期 (◎を削除せず常に共存・同期)
@@ -191,8 +255,8 @@ export class RecognitionAggregator {
           if (circleSkill && doubleSkill) {
             if (groupRate === 1) {
               const discountRatio =
-                circleSkill.needSkillPoint > 0 && card.needSp > 0
-                  ? card.needSp / circleSkill.needSkillPoint
+                circleSkill.needSkillPoint > 0 && cardState === 'unselected' && recognizedCost > 0
+                  ? recognizedCost / circleSkill.needSkillPoint
                   : 1.0;
               const doubleCost = Math.round(doubleSkill.needSkillPoint * discountRatio);
 
@@ -213,18 +277,20 @@ export class RecognitionAggregator {
                   lastSeenTimestamp: Date.now(),
                   firstSeenOrder: this.nextRecognitionOrder++,
                 });
+                this.skillMeta.set(doubleSkill.id, { synthetic: true });
                 this.skillsDirty = true;
               } else {
                 const existingDouble = this.accumulatedSkills.get(doubleSkill.id)!;
-                if (cardState === 'unselected') {
-                  if (existingDouble.state !== 'unselected') {
-                    existingDouble.state = 'unselected';
-                    this.skillsDirty = true;
-                  }
-                  if (existingDouble.recognizedCost !== doubleCost) {
-                    existingDouble.recognizedCost = doubleCost;
-                    this.skillsDirty = true;
-                  }
+                const doubleMeta = this.skillMeta.get(doubleSkill.id);
+                if (
+                  doubleMeta?.synthetic &&
+                  cardState === 'unselected' &&
+                  existingDouble.state === 'unselected' &&
+                  existingDouble.recognizedCost !== doubleCost
+                ) {
+                  existingDouble.recognizedCost = doubleCost;
+                  existingDouble.lastSeenTimestamp = Date.now();
+                  this.skillsDirty = true;
                 }
               }
             } else if (groupRate === 2) {
@@ -232,12 +298,13 @@ export class RecognitionAggregator {
               if (existingCircle) {
                 if (existingCircle.state === 'unselected') {
                   existingCircle.state = 'selected';
+                  existingCircle.lastSeenTimestamp = Date.now();
                   this.skillsDirty = true;
                 }
               } else {
                 const discountRatio =
-                  doubleSkill.needSkillPoint > 0 && card.needSp > 0
-                    ? card.needSp / doubleSkill.needSkillPoint
+                  doubleSkill.needSkillPoint > 0 && recognizedCost > 0 && cardState === 'unselected'
+                    ? recognizedCost / doubleSkill.needSkillPoint
                     : 1.0;
                 const circleCost = Math.round(circleSkill.needSkillPoint * discountRatio);
                 this.accumulatedSkills.set(circleSkill.id, {
@@ -256,24 +323,16 @@ export class RecognitionAggregator {
                   lastSeenTimestamp: Date.now(),
                   firstSeenOrder: this.nextRecognitionOrder++,
                 });
+                this.skillMeta.set(circleSkill.id, { synthetic: true });
                 this.skillsDirty = true;
               }
             }
           }
         }
 
-        // 白スキル (rarity === 1) の確定コストはロック（スクロール途中の数字ブレで上書きしない）
-        let recognizedCost: number;
-        if (existing) {
-          if (rarity === 1) {
-            recognizedCost = existing.recognizedCost;
-          } else {
-            recognizedCost = card.needSp > 0 ? card.needSp : existing.recognizedCost;
-          }
-        } else {
-          recognizedCost = card.needSp > 0 ? card.needSp : baseCost;
-        }
         const canEvolve = false;
+        const nextMeta = existingMeta ? { ...existingMeta, synthetic: false } : { synthetic: false };
+        this.skillMeta.set(card.skillId, nextMeta);
 
         if (
           !existing ||
@@ -282,24 +341,23 @@ export class RecognitionAggregator {
           existing.canEvolve !== canEvolve
         ) {
           this.skillsDirty = true;
+          this.accumulatedSkills.set(card.skillId, {
+            id: card.skillId,
+            name: card.name,
+            recognizedCost,
+            baseCost,
+            gradeValue,
+            rarity,
+            groupId,
+            groupRate,
+            state: cardState,
+            isLocked: existing ? existing.isLocked : false,
+            isExcluded: existing ? existing.isExcluded : false,
+            canEvolve,
+            lastSeenTimestamp: Date.now(),
+            firstSeenOrder: existing ? existing.firstSeenOrder : this.nextRecognitionOrder++,
+          });
         }
-
-        this.accumulatedSkills.set(card.skillId, {
-          id: card.skillId,
-          name: card.name,
-          recognizedCost,
-          baseCost,
-          gradeValue,
-          rarity,
-          groupId,
-          groupRate,
-          state: cardState,
-          isLocked: existing ? existing.isLocked : false,
-          isExcluded: existing ? existing.isExcluded : false,
-          canEvolve,
-          lastSeenTimestamp: Date.now(),
-          firstSeenOrder: existing ? existing.firstSeenOrder : this.nextRecognitionOrder++,
-        });
       }
     }
 

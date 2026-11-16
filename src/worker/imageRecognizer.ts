@@ -1391,7 +1391,9 @@ export class ImageRecognizer {
       yScanStart = Math.floor(200 * scaleH) + titlebarOffsetY;
       yScanEnd = Math.floor(950 * scaleH) + titlebarOffsetY;
       containerTop = Math.floor(380 * scaleH) + titlebarOffsetY;
-      containerBottom = Math.floor(940 * scaleH) + titlebarOffsetY;
+      // Why not 940 for compact: 1080p compact lists sit under a bottom footer gradient above y≈845,
+      // which fades bottom strokes of '3' into '2'/'7' (max clean GT compact bottom is ~831*scaleH).
+      containerBottom = Math.floor((isCompact ? 830 : 940) * scaleH) + titlebarOffsetY;
     } else {
       const scaleW = w / 561.0;
       const scaleH = (h - titlebarOffsetY) / 997.0;
