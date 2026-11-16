@@ -4988,6 +4988,24 @@
       "groundTypes": []
     },
     {
+      "id": 120291,
+      "name": "今ぞ刈りどき祝祭の季",
+      "normalizedName": "今ぞ刈りどき祝祭の季",
+      "description": "レース中盤始めに追い抜こうとすると\n速度が上がる\nマイルか中距離レースなら効果が増える",
+      "rarity": 5,
+      "groupId": 12029,
+      "groupRate": 1,
+      "gradeValue": 340,
+      "needSkillPoint": 0,
+      "uniqueSkillId1": 0,
+      "skillCategory": 5,
+      "iconId": 0,
+      "dispOrder": 10,
+      "distanceTypes": [],
+      "runningStyles": [],
+      "groundTypes": []
+    },
+    {
       "id": 120301,
       "name": "あおぞらクッキング♪",
       "normalizedName": "あおぞらクッキング♪",
@@ -10128,6 +10146,24 @@
       "gradeValue": 180,
       "needSkillPoint": 200,
       "uniqueSkillId1": 120251,
+      "skillCategory": 5,
+      "iconId": 0,
+      "dispOrder": 30,
+      "distanceTypes": [],
+      "runningStyles": [],
+      "groundTypes": []
+    },
+    {
+      "id": 920291,
+      "name": "今ぞ刈りどき祝祭の季",
+      "normalizedName": "今ぞ刈りどき祝祭の季",
+      "description": "レース中盤始めに追い抜こうとすると\n速度がわずかに上がる",
+      "rarity": 1,
+      "groupId": 92029,
+      "groupRate": 2,
+      "gradeValue": 180,
+      "needSkillPoint": 200,
+      "uniqueSkillId1": 120291,
       "skillCategory": 5,
       "iconId": 0,
       "dispOrder": 30,
@@ -28827,6 +28863,26 @@
       "groundTypes": []
     },
     {
+      "id": 102903111,
+      "name": "もっす、通してくなンしぇ！",
+      "normalizedName": "もっす、通してくなンしぇ！",
+      "description": "レース後半に追い抜こうとすると\n速度が上がる、さらにスキル発動時\n前方だと自身を含むチームメンバーの\n速度がわずかに上がる＜作戦・先行＞",
+      "rarity": 6,
+      "groupId": 10290311,
+      "groupRate": 1,
+      "gradeValue": 633,
+      "needSkillPoint": 0,
+      "uniqueSkillId1": 0,
+      "skillCategory": 4,
+      "iconId": 0,
+      "dispOrder": 22180,
+      "distanceTypes": [],
+      "runningStyles": [
+        2
+      ],
+      "groundTypes": []
+    },
+    {
       "id": 107202211,
       "name": "無双の追撃",
       "normalizedName": "無双の追撃",
@@ -39406,6 +39462,27 @@
       "groundTypes": []
     },
     {
+      "id": 102903211,
+      "name": "万果豊穣",
+      "normalizedName": "万果豊穣",
+      "description": "レース最終盤始めのどこかで\nラストスパートの最中なら速度が上がり\nさらに自身を含むチームメンバーの速度\nがわずかに上がる＜マイル/中距離＞",
+      "rarity": 6,
+      "groupId": 10290321,
+      "groupRate": 1,
+      "gradeValue": 633,
+      "needSkillPoint": 0,
+      "uniqueSkillId1": 0,
+      "skillCategory": 3,
+      "iconId": 0,
+      "dispOrder": 25470,
+      "distanceTypes": [
+        2,
+        3
+      ],
+      "runningStyles": [],
+      "groundTypes": []
+    },
+    {
       "id": 204172,
       "name": "溌剌",
       "normalizedName": "溌剌",
@@ -41338,6 +41415,46 @@
       "dispOrder": 26580,
       "distanceTypes": [],
       "runningStyles": [],
+      "groundTypes": []
+    },
+    {
+      "id": 204771,
+      "name": "出陣",
+      "normalizedName": "出陣",
+      "description": "レース中盤のどこかで速度が上がる\n＜作戦・差し＞",
+      "rarity": 2,
+      "groupId": 20477,
+      "groupRate": 2,
+      "gradeValue": 508,
+      "needSkillPoint": 140,
+      "uniqueSkillId1": 0,
+      "skillCategory": 2,
+      "iconId": 0,
+      "dispOrder": 26590,
+      "distanceTypes": [],
+      "runningStyles": [
+        3
+      ],
+      "groundTypes": []
+    },
+    {
+      "id": 204772,
+      "name": "狼煙を上げて",
+      "normalizedName": "狼煙を上げて",
+      "description": "レース中盤のどこかで速度が\nわずかに上がる＜作戦・差し＞",
+      "rarity": 1,
+      "groupId": 20477,
+      "groupRate": 1,
+      "gradeValue": 217,
+      "needSkillPoint": 140,
+      "uniqueSkillId1": 0,
+      "skillCategory": 2,
+      "iconId": 0,
+      "dispOrder": 26600,
+      "distanceTypes": [],
+      "runningStyles": [
+        3
+      ],
       "groundTypes": []
     },
     {
@@ -43763,6 +43880,22 @@
       "baseSkillId": 200341,
       "upgradeId": 102902221,
       "evolvedSkillId": 102902221
+    },
+    {
+      "cardId": 102903,
+      "cardName": "[熟れしめでたし実り姫]ユキノビジン",
+      "slotRank": 3,
+      "baseSkillId": 202471,
+      "upgradeId": 102903111,
+      "evolvedSkillId": 102903111
+    },
+    {
+      "cardId": 102903,
+      "cardName": "[熟れしめでたし実り姫]ユキノビジン",
+      "slotRank": 5,
+      "baseSkillId": 204171,
+      "upgradeId": 102903211,
+      "evolvedSkillId": 102903211
     },
     {
       "cardId": 103001,
@@ -49214,6 +49347,25 @@
       "defaultAptitudes": {
         "turf": 7,
         "dirt": 7,
+        "short": 4,
+        "mile": 7,
+        "middle": 7,
+        "long": 3,
+        "nige": 5,
+        "senkou": 7,
+        "sashi": 2,
+        "oikomi": 1
+      }
+    },
+    {
+      "cardId": 102903,
+      "charaId": 1029,
+      "cardTitle": "[熟れしめでたし実り姫]",
+      "charaName": "ユキノビジン",
+      "uniqueSkillId": 120291,
+      "defaultAptitudes": {
+        "turf": 7,
+        "dirt": 6,
         "short": 4,
         "mile": 7,
         "middle": 7,
