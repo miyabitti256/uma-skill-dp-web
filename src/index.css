@@ -1,0 +1,246 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family: 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: #f6f5f8;
+  color: #5b4333;
+}
+
+/* ウマ娘実機風の淡いライトグレー＋幾何学ダイヤ背景 */
+.uma-bg-pattern {
+  background-color: #f6f5f8;
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      rgba(155, 150, 165, 0.045) 0px,
+      rgba(155, 150, 165, 0.045) 14px,
+      transparent 14px,
+      transparent 28px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(155, 150, 165, 0.045) 0px,
+      rgba(155, 150, 165, 0.045) 14px,
+      transparent 14px,
+      transparent 28px
+    );
+}
+
+/* 実機上部バー準拠の芝グリーンバー */
+.uma-header-bar {
+  background: linear-gradient(180deg, #a5dc4a 0%, #7aca08 100%);
+  border-bottom: 2px solid #4e9606;
+  box-shadow: 0 2px 6px rgba(60, 110, 10, 0.18);
+}
+
+/* 実機「編成情報 / ウマ娘詳細」の横幅いっぱい緑セクションバー */
+.uma-bar {
+  background: linear-gradient(180deg, #9ed930 0%, #76c30f 100%);
+  border-bottom: 1.5px solid #599c08;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(45, 92, 4, 0.65);
+}
+
+.uma-bar-pink {
+  background: linear-gradient(180deg, #ff81bc 0%, #e4418d 100%);
+  border-bottom: 1.5px solid #b52468;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(120, 12, 60, 0.65);
+}
+
+/* 実機ウィンドウ枠 */
+.uma-window {
+  background-color: #f4f3f1;
+  border: 1.5px solid #c6c3cc;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(70, 58, 50, 0.08);
+}
+
+/* 実機 / U-tools 準拠の立体ボタン */
+.uma-btn {
+  background: linear-gradient(180deg, #ffffff 0%, #f2f0f5 76%, #e4e0e9 100%);
+  border: 1px solid #9e9aa6;
+  border-radius: 7px;
+  box-shadow: 0 2px 0 #b4b0bc;
+  color: #5b4333;
+  transition: transform 0.08s ease, filter 0.12s ease, box-shadow 0.08s ease;
+}
+.uma-btn:hover {
+  filter: brightness(1.02);
+}
+.uma-btn:active {
+  transform: translateY(1.5px);
+  box-shadow: 0 0.5px 0 #b4b0bc;
+}
+
+.uma-btn-green {
+  background: linear-gradient(180deg, #b5f03c 0%, #7ad314 54%, #56b308 100%);
+  border: 1px solid #3c8604;
+  border-radius: 7px;
+  box-shadow: 0 2px 0 #3a7c05;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(42, 92, 4, 0.78);
+  transition: transform 0.08s ease, filter 0.12s ease, box-shadow 0.08s ease;
+}
+.uma-btn-green:hover {
+  filter: brightness(1.04);
+}
+.uma-btn-green:active {
+  transform: translateY(1.5px);
+  box-shadow: 0 0.5px 0 #3a7c05;
+}
+
+.uma-btn-pink {
+  background: linear-gradient(180deg, #ff8ac4 0%, #f04894 55%, #d62d7a 100%);
+  border: 1px solid #a81c5c;
+  border-radius: 7px;
+  box-shadow: 0 2px 0 #961852;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(120, 12, 60, 0.7);
+  transition: transform 0.08s ease, filter 0.12s ease, box-shadow 0.08s ease;
+}
+.uma-btn-pink:hover {
+  filter: brightness(1.04);
+}
+.uma-btn-pink:active {
+  transform: translateY(1.5px);
+  box-shadow: 0 0.5px 0 #961852;
+}
+
+/* スキルカード（実機 052727.png / 052736.png 再現） */
+.uma-skill-card {
+  border-radius: 7px;
+  border: 1.5px solid #bdbac6;
+  box-shadow: 0 2px 0 rgba(110, 102, 120, 0.16);
+}
+
+.uma-skill-white {
+  background: linear-gradient(180deg, #ffffff 0%, #f6f5f9 68%, #e9e7ef 100%);
+  border-color: #bcb9c6;
+}
+
+.uma-skill-gold {
+  background: linear-gradient(180deg, #fff6c2 0%, #ffe06c 52%, #f4b732 100%);
+  border-color: #c98d18;
+}
+
+.uma-skill-rainbow {
+  background: linear-gradient(
+    110deg,
+    #c6e6ea 0%,
+    #c7d1ef 48%,
+    #e9c5ea 100%
+  );
+  border-color: #9a8fb2;
+}
+
+.uma-skill-acquired {
+  background: linear-gradient(180deg, #f1fbe8 0%, #ddf4c9 100%);
+  border-color: #77c239;
+}
+
+/* 実機SP数値凹みボックス */
+.uma-sp-box {
+  background: #f8f7fa;
+  border: 1px solid #c3c0cb;
+  border-radius: 5px;
+  box-shadow: inset 0 1px 2px rgba(60, 50, 70, 0.1);
+}
+
+/* スキルカード左端のアイコン枠 */
+.uma-icon-frame-white {
+  background: linear-gradient(180deg, #a7e43c 0%, #6ac210 100%);
+  border: 1.5px solid #488e07;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(38, 82, 3, 0.7);
+}
+
+.uma-icon-frame-gold {
+  background: linear-gradient(180deg, #ffe76e 0%, #e59c12 100%);
+  border: 1.5px solid #a96d04;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(115, 68, 0, 0.75);
+}
+
+.uma-icon-frame-rainbow {
+  background: linear-gradient(135deg, #f472b6 0%, #818cf8 50%, #34d399 100%);
+  border: 1.5px solid #7c58a6;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(60, 35, 90, 0.75);
+}
+
+/* 芝ゲージ */
+.uma-gauge-fill {
+  background: linear-gradient(90deg, #86dc20 0%, #64c112 65%, #f4b732 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.uma-gauge-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    -55deg,
+    rgba(255, 255, 255, 0.22) 0px,
+    rgba(255, 255, 255, 0.22) 8px,
+    transparent 8px,
+    transparent 16px
+  );
+  animation: uma-stripe-flow 1.4s linear infinite;
+}
+
+@keyframes uma-stripe-flow {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 28px 0;
+  }
+}
+
+@keyframes uma-card-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.uma-animate-card {
+  animation: uma-card-enter 0.14s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uma-gauge-fill::after,
+  .uma-animate-card {
+    animation: none !important;
+  }
+}
+
+/* スクロールバー (実機リスト風) */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(200, 196, 208, 0.3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(130, 120, 114, 0.45);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(91, 67, 51, 0.7);
+}

@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+*.tsbuildinfo
+
+# Cloudflare
+.cloudflare/
+.wrangler/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
