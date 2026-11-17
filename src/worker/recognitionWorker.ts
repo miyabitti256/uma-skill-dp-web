@@ -48,6 +48,7 @@ function createFallbackOutput(): RecognitionOutput {
     screenType: '育成完了確認（ホーム画面）',
     screenMode: 'idle',
     skillPoint: 0,
+    skillPointValid: false,
     cards: [],
   };
 }

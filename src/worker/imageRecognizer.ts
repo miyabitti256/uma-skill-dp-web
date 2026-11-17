@@ -34,6 +34,7 @@ export interface RecognitionOutput {
   screenType: 'ウマ娘詳細適性ポップアップ' | '育成完了確認（ホーム画面）' | 'スキル獲得説明省略表示' | 'スキル獲得通常表示';
   screenMode: 'chara_detail' | 'idle' | 'compact' | 'normal';
   skillPoint: number;
+  skillPointValid?: boolean;
   aptitudes?: Record<string, string>;
   detectedCardId?: number;
   cards: RecognizedCardResult[];
@@ -499,6 +500,7 @@ export class ImageRecognizer {
     hash: number;
     bin: Uint8Array;
     value: number;
+    valid: boolean;
   } | null = null;
   private cardNameCache = new Map<
     string,
@@ -1012,6 +1014,20 @@ export class ImageRecognizer {
           const stdRGB = Math.sqrt(
             ((avgR - meanRGB) ** 2 + (avgG - meanRGB) ** 2 + (avgB - meanRGB) ** 2) / 3
           );
+          const maxC = Math.max(avgR, avgG, avgB);
+          const minC = Math.min(avgR, avgG, avgB);
+          const deltaC = maxC - minC;
+          let hueDeg = 0;
+          if (deltaC > 0) {
+            if (maxC === avgR) {
+              hueDeg = 60 * (((avgG - avgB) / deltaC) % 6);
+            } else if (maxC === avgG) {
+              hueDeg = 60 * ((avgB - avgR) / deltaC + 2);
+            } else {
+              hueDeg = 60 * ((avgR - avgG) / deltaC + 4);
+            }
+            if (hueDeg < 0) hueDeg += 360;
+          }
 
           if (stdRGB < 12) {
             rank = 'G';
@@ -1019,16 +1035,27 @@ export class ImageRecognizer {
             rank = 'F';
           } else if (avgB > 180 && avgR > 160 && avgG < 155) {
             rank = 'E';
-          } else if (avgB > 190 && avgG > 160 && avgR < 150) {
+          } else if (avgB > 190 && avgG > 160 && avgR < 160) {
             rank = 'D';
           } else if (avgG > avgR + 15 && avgG > avgB + 15) {
             rank = 'C';
-          } else if (avgR > 215 && avgG >= 125 && avgG <= 155 && avgB >= 155 && avgB <= 185) {
+          } else if (
+            avgR > 205 &&
+            avgG >= 115 &&
+            avgG <= 160 &&
+            avgB >= 145 &&
+            avgB <= 195 &&
+            avgB > avgG + 15
+          ) {
             rank = 'B';
-          } else if (avgR > 195 && avgB < 135) {
-            rank = 'A';
-          } else if (avgR > 215 && avgG > 165 && avgG <= 210 && avgB >= 140 && (avgR - avgB) >= 35) {
-            rank = 'S';
+          } else if (avgR > 195 && avgB < 135 && avgR - avgB >= 70) {
+            if (hueDeg >= 33 && hueDeg <= 60) {
+              rank = 'S';
+            } else if (hueDeg >= 10 && hueDeg < 33) {
+              rank = 'A';
+            } else {
+              rank = '?';
+            }
           } else {
             rank = '?';
           }
@@ -1229,6 +1256,13 @@ export class ImageRecognizer {
     img: ImageBuffer,
     screenType: 'ウマ娘詳細適性ポップアップ' | '育成完了確認（ホーム画面）' | 'スキル獲得説明省略表示' | 'スキル獲得通常表示'
   ): number {
+    return this.recognizeSkillPtWithValidity(img, screenType).value;
+  }
+
+  private recognizeSkillPtWithValidity(
+    img: ImageBuffer,
+    screenType: 'ウマ娘詳細適性ポップアップ' | '育成完了確認（ホーム画面）' | 'スキル獲得説明省略表示' | 'スキル獲得通常表示'
+  ): { value: number; valid: boolean } {
     const { width: w, height: h, data } = img;
 
     let titlebarOffsetY = 0;
@@ -1281,7 +1315,7 @@ export class ImageRecognizer {
 
     const roiW = x1 - x0;
     const roiH = y1 - y0;
-    if (roiW <= 0 || roiH <= 0) return 0;
+    if (roiW <= 0 || roiH <= 0) return { value: 0, valid: false };
 
     const binInv = new Uint8Array(roiW * roiH);
     let hash = 2166136261;
@@ -1310,7 +1344,7 @@ export class ImageRecognizer {
       this.lastSpCache.hash === hash &&
       bytesEqual(this.lastSpCache.bin, binInv)
     ) {
-      return this.lastSpCache.value;
+      return { value: this.lastSpCache.value, valid: this.lastSpCache.valid };
     }
 
     const ccs = connectedComponentsWithStats(binInv, roiW, roiH);
@@ -1327,8 +1361,8 @@ export class ImageRecognizer {
 
     validCcs.sort((a, b) => a.left - b.left);
     if (validCcs.length === 0 || validCcs.length > 4) {
-      this.lastSpCache = { screenType, roiW, roiH, hash, bin: binInv, value: 0 };
-      return 0;
+      this.lastSpCache = { screenType, roiW, roiH, hash, bin: binInv, value: 0, valid: false };
+      return { value: 0, valid: false };
     }
 
     let valStr = '';
@@ -1342,10 +1376,19 @@ export class ImageRecognizer {
       valStr += this.recognizeDigit(patch, c.width, c.height);
     }
 
-    const val = parseInt(valStr, 10) || 0;
-    const out = val < 10 || val > 9999 ? 0 : val;
-    this.lastSpCache = { screenType, roiW, roiH, hash, bin: binInv, value: out };
-    return out;
+    const val = parseInt(valStr, 10);
+    if (
+      (validCcs.length > 1 && valStr.startsWith('0')) ||
+      Number.isNaN(val) ||
+      val < 0 ||
+      val > 9999
+    ) {
+      this.lastSpCache = { screenType, roiW, roiH, hash, bin: binInv, value: 0, valid: false };
+      return { value: 0, valid: false };
+    }
+
+    this.lastSpCache = { screenType, roiW, roiH, hash, bin: binInv, value: val, valid: true };
+    return { value: val, valid: true };
   }
 
   /**
@@ -1898,19 +1941,70 @@ export class ImageRecognizer {
     const resizedFull = resizeArea(cropPatch, cropW, cropH, 64, 16);
     const fullBytes = packBits(resizedFull);
 
-    // 末尾文字の ○ vs ◎ 判定
+    // 末尾文字の ○ vs ◎ 判定 (緑選択カード等の背景輝度差に耐える相対グレースケール判定)
     let isDoubleCircle = false;
-    const rightCharW = Math.min(cropW, Math.ceil(cropH * 1.15));
-    let whiteCount = 0;
-    let totalCount = 0;
-    for (let y = 0; y < cropH; y++) {
-      for (let x = cropW - rightCharW; x < cropW; x++) {
-        if (cropPatch[y * cropW + x] > 128) whiteCount++;
-        totalCount++;
+    const scanW = Math.min(cropW, Math.ceil(cropH * 1.15));
+    if (scanW > 0 && cropH > 0) {
+      const scanGrays = new Uint8Array(scanW * cropH);
+      const startScanX = tx1 + firstCol + (cropW - scanW);
+      for (let y = 0; y < cropH; y++) {
+        const rowOff = (ty1 + firstRow + y) * cw;
+        for (let sx = 0; sx < scanW; sx++) {
+          const idx = (rowOff + startScanX + sx) * 4;
+          scanGrays[y * scanW + sx] = Math.round(
+            0.299 * cardData[idx] + 0.587 * cardData[idx + 1] + 0.114 * cardData[idx + 2]
+          );
+        }
       }
-    }
-    if (totalCount > 0 && whiteCount / totalCount >= 0.28) {
-      isDoubleCircle = true;
+      const sortedGrays = new Uint8Array(scanGrays).sort();
+      const bgGray = sortedGrays[Math.min(sortedGrays.length - 1, Math.floor(sortedGrays.length * 0.9))];
+      const relThresh = Math.max(25, Math.round(bgGray * 0.16));
+
+      const searchR = Math.max(0, scanW - Math.floor(cropH * 0.65));
+      let splitX = 0;
+      let minColDark = cropH + 1;
+      for (let sx = 0; sx <= searchR && sx < scanW; sx++) {
+        let darkCount = 0;
+        for (let y = 0; y < cropH; y++) {
+          if (bgGray - scanGrays[y * scanW + sx] >= relThresh) {
+            darkCount++;
+          }
+        }
+        if (darkCount <= minColDark) {
+          minColDark = darkCount;
+          splitX = sx;
+        }
+      }
+
+      let xMin = scanW;
+      let xMax = -1;
+      let yMin = cropH;
+      let yMax = -1;
+      for (let y = 0; y < cropH; y++) {
+        for (let sx = splitX; sx < scanW; sx++) {
+          if (bgGray - scanGrays[y * scanW + sx] >= relThresh) {
+            if (sx < xMin) xMin = sx;
+            if (sx > xMax) xMax = sx;
+            if (y < yMin) yMin = y;
+            if (y > yMax) yMax = y;
+          }
+        }
+      }
+
+      if (xMin <= xMax && yMin <= yMax) {
+        let totDark = 0;
+        const totPx = (xMax - xMin + 1) * (yMax - yMin + 1);
+        for (let y = yMin; y <= yMax; y++) {
+          for (let sx = xMin; sx <= xMax; sx++) {
+            if (bgGray - scanGrays[y * scanW + sx] >= relThresh) {
+              totDark++;
+            }
+          }
+        }
+        if (totPx > 0 && totDark / totPx >= 0.42) {
+          isDoubleCircle = true;
+        }
+      }
     }
 
     // 直近カード特徴量キャッシュ照合 (静止・低速スクロール時の再照合をスキップ)
@@ -2093,8 +2187,8 @@ export class ImageRecognizer {
       }
 
       let circlePen = 0;
-      if (s.name.endsWith('◎')) circlePen = isDoubleCircle ? 0 : 80;
-      else if (s.name.endsWith('○')) circlePen = isDoubleCircle ? 80 : 0;
+      if (s.name.endsWith('◎')) circlePen = isDoubleCircle ? 0 : 120;
+      else if (s.name.endsWith('○')) circlePen = isDoubleCircle ? 120 : 0;
 
       if (rarityPen + aspPen + circlePen >= secondBestDist) {
         continue;
@@ -2264,8 +2358,40 @@ export class ImageRecognizer {
 
       if (firstCharSiblings && firstCharSiblings.length > 1) {
         // 先頭1文字のみが異なる同族スキル（例: 春ウマ娘○ vs 夏ウマ娘○、右回り○ vs 左回り○）
+        let minBestH0 = 99999;
+        let bestChar0Var = headVariants[0];
+        for (const hv of headVariants) {
+          let h0 = 0;
+          for (let y = 0; y < 16; y++) {
+            const rowOff = y * 4;
+            h0 +=
+              POPCNT8[hv[rowOff] ^ bestSkill.headBytes[rowOff]] +
+              POPCNT8[hv[rowOff + 1] ^ bestSkill.headBytes[rowOff + 1]];
+          }
+          if (h0 < minBestH0) {
+            minBestH0 = h0;
+            bestChar0Var = hv;
+          }
+        }
         for (const sib of firstCharSiblings) {
           if (sib.id === bestSkill.id) continue;
+          let minSibH0 = 99999;
+          for (const hv of headVariants) {
+            let h0 = 0;
+            for (let y = 0; y < 16; y++) {
+              const rowOff = y * 4;
+              h0 +=
+                POPCNT8[hv[rowOff] ^ sib.headBytes[rowOff]] +
+                POPCNT8[hv[rowOff + 1] ^ sib.headBytes[rowOff + 1]];
+            }
+            if (h0 < minSibH0) {
+              minSibH0 = h0;
+            }
+          }
+          if (minSibH0 <= minBestH0) {
+            return storeCache(UNKNOWN);
+          }
+
           let bestChar0Supp = 0;
           let sibChar0Supp = 0;
           for (let y = 0; y < 16; y++) {
@@ -2273,7 +2399,7 @@ export class ImageRecognizer {
             for (let b = 0; b < 2; b++) {
               const diffMask = bestSkill.headBytes[rowOff + b] ^ sib.headBytes[rowOff + b];
               if (diffMask === 0) continue;
-              const imgB = headVariants[0][rowOff + b];
+              const imgB = bestChar0Var[rowOff + b];
               bestChar0Supp += POPCNT8[~(imgB ^ bestSkill.headBytes[rowOff + b]) & diffMask & 0xff];
               sibChar0Supp += POPCNT8[~(imgB ^ sib.headBytes[rowOff + b]) & diffMask & 0xff];
             }
@@ -2299,7 +2425,7 @@ export class ImageRecognizer {
             for (let i = 0; i < 64; i++) {
               const diffMask = bestSkill.headBytes[i] ^ sib.headBytes[i];
               if (diffMask === 0) continue;
-              const imgByte = headVariants[0][i];
+              const imgByte = bestVariantHead[i];
               bestHeadSupp += POPCNT8[~(imgByte ^ bestSkill.headBytes[i]) & diffMask & 0xff];
               sibHeadSupp += POPCNT8[~(imgByte ^ sib.headBytes[i]) & diffMask & 0xff];
             }
@@ -2475,6 +2601,7 @@ export class ImageRecognizer {
           screenType,
           screenMode,
           skillPoint: 0,
+          skillPointValid: false,
           aptitudes,
           detectedCardId,
           cards: [],
@@ -2484,18 +2611,20 @@ export class ImageRecognizer {
         screenType: '育成完了確認（ホーム画面）',
         screenMode: 'idle',
         skillPoint: 0,
+        skillPointValid: false,
         cards: [],
       };
     }
 
     // 所持スキルPt認識
-    const skillPoint = this.recognizeSkillPt(img, screenType);
+    const sp = this.recognizeSkillPtWithValidity(img, screenType);
 
     if (screenType === '育成完了確認（ホーム画面）') {
       return {
         screenType,
         screenMode,
-        skillPoint,
+        skillPoint: sp.value,
+        skillPointValid: sp.valid,
         cards: [],
       };
     }
@@ -2638,13 +2767,25 @@ export class ImageRecognizer {
       });
     }
 
-    // スキル獲得画面と判定されたが有効なカードが1枚も検出されない場合は、
-    // 非スキル画面（遷移中・レース画面等）のフォールバックとして扱い誤SP上書きを防止
+    // スキル獲得画面と判定されたが有効なカードが1枚も検出されない場合、
+    // 通常表示は非スキル画面（遷移中・レース画面等）のフォールバックでもあるため idle として誤SP上書きを防ぐ。
+    // 一方、説明省略表示は緑トグルという強い陽性アンカーで確定しており、通常表示でもカード枠 (boxes) が残っていれば
+    // スキル画面と確定できるため、全カード取得済で cards が 0 になっても有効SP (skillPointValid=true) を維持する。
     if (cards.length === 0) {
+      if (isCompact || boxes.length > 0) {
+        return {
+          screenType,
+          screenMode,
+          skillPoint: sp.value,
+          skillPointValid: sp.valid,
+          cards: [],
+        };
+      }
       return {
         screenType: '育成完了確認（ホーム画面）',
         screenMode: 'idle',
         skillPoint: 0,
+        skillPointValid: false,
         cards: [],
       };
     }
@@ -2652,7 +2793,8 @@ export class ImageRecognizer {
     return {
       screenType,
       screenMode,
-      skillPoint,
+      skillPoint: sp.value,
+      skillPointValid: sp.valid,
       cards,
     };
   }

@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { HelpCircle } from 'lucide-react';
+import { Bug, HelpCircle } from 'lucide-react';
 import { ScreenMode } from '../types/recognition.ts';
 import { CaptureSourceType } from '../capture/captureManager.ts';
 
@@ -143,6 +143,17 @@ export function HeaderBar({
           <HelpCircle className="w-3.5 h-3.5 text-[#56b308]" />
           使い方
         </button>
+
+        <a
+          href="https://github.com/miyabitti256/uma-skill-dp-web/issues/new"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="uma-btn px-2.5 py-1 text-xs font-bold flex items-center gap-1"
+          title="GitHub Issues でバグや要望を報告"
+        >
+          <Bug className="w-3.5 h-3.5 text-[#e43f8c]" />
+          バグ報告はこちら
+        </a>
       </div>
     </header>
   );

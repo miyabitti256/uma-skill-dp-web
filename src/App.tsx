@@ -501,6 +501,20 @@ function App() {
         </div>
       </main>
 
+      <footer className="px-3 py-1 border-t border-[#d6d3dc] bg-white/85 text-[11px] text-[#7a6858] flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 shrink-0">
+        <span>
+          非公式ツールです。「ウマ娘 プリティーダービー」に関する著作権・商標権は株式会社Cygamesに帰属します。
+        </span>
+        <a
+          href="https://github.com/miyabitti256/uma-skill-dp-web/issues/new"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-bold text-[#3c8604] hover:underline shrink-0"
+        >
+          バグ報告はこちら (GitHub Issues)
+        </a>
+      </footer>
+
       <UsageModal isOpen={isUsageOpen} onClose={handleCloseUsage} />
     </div>
   );
