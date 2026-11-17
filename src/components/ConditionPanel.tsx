@@ -112,30 +112,16 @@ export function ConditionPanel({
       </div>
 
       <div className="p-2.5 bg-white border-b border-[#d6d3dc]">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-baseline gap-1">
-            <input
-              type="number"
-              min={0}
-              max={99999}
-              value={availableSp}
-              onChange={(e) => onSpChange(Number(e.target.value) || 0)}
-              className="w-24 uma-sp-box px-2 py-1 text-lg font-black text-[#d96200] focus:outline-none focus:border-[#76c30f] font-mono tabular-nums"
-            />
-            <span className="text-xs font-bold text-[#7f6958]">Pt</span>
-          </div>
-
-          <div className="flex gap-1">
-            {[100, 300, 500, 1000].map((delta) => (
-              <button
-                key={delta}
-                onClick={() => onSpChange(availableSp + delta)}
-                className="uma-btn text-[10px] font-extrabold px-1.5 py-1 tabular-nums"
-              >
-                +{delta}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-baseline gap-1">
+          <input
+            type="number"
+            min={0}
+            max={99999}
+            value={availableSp}
+            onChange={(e) => onSpChange(Number(e.target.value) || 0)}
+            className="w-24 uma-sp-box px-2 py-1 text-lg font-black text-[#d96200] focus:outline-none focus:border-[#76c30f] font-mono tabular-nums"
+          />
+          <span className="text-xs font-bold text-[#7f6958]">Pt</span>
         </div>
       </div>
 

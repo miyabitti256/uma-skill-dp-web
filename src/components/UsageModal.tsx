@@ -73,7 +73,7 @@ export function UsageModal({ isOpen, onClose }: UsageModalProps) {
                 各カードの <strong>＋ボタン</strong> で獲得済へ切替、鍵ボタンで必須取得ロック、禁止ボタンで候補から除外できます。
               </li>
               <li>
-                育成ウマ娘・シナリオを選択すると、下部に進化選択ガイドが表示されます。
+                育成ウマ娘・シナリオを選択すると、下部に推奨進化スキル選択が表示されます。
               </li>
             </ul>
           </div>

@@ -147,9 +147,6 @@ function EvolutionRow({ evo }: { evo: EvolutionRecommendation }) {
               {evo.evolvedSkill ? evo.evolvedSkill.name : evo.baseSkillName}
             </span>
           </div>
-          <p className={`text-[11px] truncate ${evo.canEvolve ? 'text-[#be185d] font-bold' : 'text-[#7f6958]'}`}>
-            {evo.recommendationNote}
-          </p>
         </div>
       </div>
 
@@ -298,10 +295,10 @@ export function OptimizationPanel({
         </div>
       </section>
 
-      {/* 3. 進化選択ガイド */}
+      {/* 3. 推奨進化スキル選択 */}
       <section className="uma-window overflow-hidden shrink-0">
         <h3 className="uma-bar-pink px-3 py-1 text-xs font-extrabold">
-          育成完了時の進化選択ガイド
+          推奨進化スキル選択
         </h3>
 
         <div className="p-2 space-y-1.5 bg-[#f4f3f1]">
