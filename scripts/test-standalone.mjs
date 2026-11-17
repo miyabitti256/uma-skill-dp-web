@@ -1181,3 +1181,35 @@ describe('TypeScriptSkillSolver 12-State Evolution DP & Same-Group Exclusivity',
     assert.equal(resLockedGroup.maxGradeValue, 559);
   });
 });
+
+// 15. 残SP 0〜9 更新回帰テスト
+describe('Exhausted SP update', () => {
+  const masterData = JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'));
+  const masterStore = new MasterStore(masterData);
+
+  test('accepts 1-digit and 0 SP as confirmed values after 2-frame consensus', () => {
+    // What: スキルを買い切った直後の 0〜9 SP が未認識扱いで据え置かれず、0 まで更新されること。
+    const agg = new RecognitionAggregator(masterStore);
+    const frame = (skillPoint, skillPointValid = true) => ({
+      screenType: 'スキル獲得説明省略表示',
+      screenMode: 'compact',
+      skillPoint,
+      skillPointValid,
+      cards: [],
+    });
+
+    assert.equal(agg.processOutput(frame(380)).detectedSkillPoint, undefined);
+    assert.equal(agg.processOutput(frame(380)).detectedSkillPoint, 380);
+
+    // 1桁 (8)
+    assert.equal(agg.processOutput(frame(8)).detectedSkillPoint, 380);
+    assert.equal(agg.processOutput(frame(8)).detectedSkillPoint, 8);
+
+    // 0 (SPを使い切った状態)
+    assert.equal(agg.processOutput(frame(0)).detectedSkillPoint, 8);
+    assert.equal(agg.processOutput(frame(0)).detectedSkillPoint, 0);
+
+    // OCR失敗 (skillPointValid=false) の 0 は確定値に影響しない
+    assert.equal(agg.processOutput(frame(0, false)).detectedSkillPoint, 0);
+  });
+});

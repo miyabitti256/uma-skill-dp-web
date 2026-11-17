@@ -34,6 +34,11 @@ export interface RecognitionOutput {
   screenType: 'ウマ娘詳細適性ポップアップ' | '育成完了確認（ホーム画面）' | 'スキル獲得説明省略表示' | 'スキル獲得通常表示';
   screenMode: 'chara_detail' | 'idle' | 'compact' | 'normal';
   skillPoint: number;
+  /**
+   * skillPoint が実際にOCRで確定した値かどうか。
+   * SP残量は 0〜9 や 0 も正常値のため、値だけでは「未認識(0)」と区別できない。
+   */
+  skillPointValid?: boolean;
   aptitudes?: Record<string, string>;
   detectedCardId?: number;
   cards: RecognizedCardResult[];
@@ -499,6 +504,7 @@ export class ImageRecognizer {
     hash: number;
     bin: Uint8Array;
     value: number;
+    valid: boolean;
   } | null = null;
   private cardNameCache = new Map<
     string,
@@ -1228,7 +1234,7 @@ export class ImageRecognizer {
   public recognizeSkillPt(
     img: ImageBuffer,
     screenType: 'ウマ娘詳細適性ポップアップ' | '育成完了確認（ホーム画面）' | 'スキル獲得説明省略表示' | 'スキル獲得通常表示'
-  ): number {
+  ): { value: number; valid: boolean } {
     const { width: w, height: h, data } = img;
 
     let titlebarOffsetY = 0;
@@ -1281,7 +1287,7 @@ export class ImageRecognizer {
 
     const roiW = x1 - x0;
     const roiH = y1 - y0;
-    if (roiW <= 0 || roiH <= 0) return 0;
+    if (roiW <= 0 || roiH <= 0) return { value: 0, valid: false };
 
     const binInv = new Uint8Array(roiW * roiH);
     let hash = 2166136261;
@@ -1310,7 +1316,7 @@ export class ImageRecognizer {
       this.lastSpCache.hash === hash &&
       bytesEqual(this.lastSpCache.bin, binInv)
     ) {
-      return this.lastSpCache.value;
+      return { value: this.lastSpCache.value, valid: this.lastSpCache.valid };
     }
 
     const ccs = connectedComponentsWithStats(binInv, roiW, roiH);
@@ -1327,8 +1333,8 @@ export class ImageRecognizer {
 
     validCcs.sort((a, b) => a.left - b.left);
     if (validCcs.length === 0 || validCcs.length > 4) {
-      this.lastSpCache = { screenType, roiW, roiH, hash, bin: binInv, value: 0 };
-      return 0;
+      this.lastSpCache = { screenType, roiW, roiH, hash, bin: binInv, value: 0, valid: false };
+      return { value: 0, valid: false };
     }
 
     let valStr = '';
@@ -1342,10 +1348,13 @@ export class ImageRecognizer {
       valStr += this.recognizeDigit(patch, c.width, c.height);
     }
 
-    const val = parseInt(valStr, 10) || 0;
-    const out = val < 10 || val > 9999 ? 0 : val;
-    this.lastSpCache = { screenType, roiW, roiH, hash, bin: binInv, value: out };
-    return out;
+    // Why not val < 10: スキルを買い切った直後の SP は 0〜9 の1桁になることがあり、
+    // これを未認識扱いにすると現在SPが更新されない。0 も正常値として扱う。
+    const val = parseInt(valStr, 10);
+    const valid = valStr.length > 0 && Number.isFinite(val) && val >= 0 && val <= 9999;
+    const out = valid ? val : 0;
+    this.lastSpCache = { screenType, roiW, roiH, hash, bin: binInv, value: out, valid };
+    return { value: out, valid };
   }
 
   /**
@@ -2475,6 +2484,7 @@ export class ImageRecognizer {
           screenType,
           screenMode,
           skillPoint: 0,
+          skillPointValid: false,
           aptitudes,
           detectedCardId,
           cards: [],
@@ -2484,18 +2494,22 @@ export class ImageRecognizer {
         screenType: '育成完了確認（ホーム画面）',
         screenMode: 'idle',
         skillPoint: 0,
+        skillPointValid: false,
         cards: [],
       };
     }
 
     // 所持スキルPt認識
-    const skillPoint = this.recognizeSkillPt(img, screenType);
+    const spResult = this.recognizeSkillPt(img, screenType);
+    const skillPoint = spResult.value;
+    const skillPointValid = spResult.valid;
 
     if (screenType === '育成完了確認（ホーム画面）') {
       return {
         screenType,
         screenMode,
         skillPoint,
+        skillPointValid,
         cards: [],
       };
     }
@@ -2638,13 +2652,27 @@ export class ImageRecognizer {
       });
     }
 
-    // スキル獲得画面と判定されたが有効なカードが1枚も検出されない場合は、
-    // 非スキル画面（遷移中・レース画面等）のフォールバックとして扱い誤SP上書きを防止
+    // スキル獲得画面と判定されたが有効なカードが1枚も検出されない場合、
+    // 通常表示は非スキル画面（遷移中・レース画面等）のフォールバックでもあるため
+    // 従来通り idle として誤SP上書きを防ぐ。
+    // 一方、説明省略表示は緑トグルという強い陽性アンカーで確定しており、
+    // また通常表示でも取得済カードの枠 (boxes) が残っていればスキル獲得画面と確定できる。
+    // これにより推奨スキルを最後まで取り切って未選択カードが0枚になってもSPを更新し続ける。
     if (cards.length === 0) {
+      if (isCompact || boxes.length > 0) {
+        return {
+          screenType,
+          screenMode,
+          skillPoint,
+          skillPointValid,
+          cards: [],
+        };
+      }
       return {
         screenType: '育成完了確認（ホーム画面）',
         screenMode: 'idle',
         skillPoint: 0,
+        skillPointValid: false,
         cards: [],
       };
     }
@@ -2653,6 +2681,7 @@ export class ImageRecognizer {
       screenType,
       screenMode,
       skillPoint,
+      skillPointValid,
       cards,
     };
   }

@@ -150,12 +150,14 @@ export class RecognitionAggregator {
       this.lastValidCardId = output.detectedCardId;
     }
 
+    const isSkillPointValid = output.skillPointValid ?? (output.skillPoint > 0);
+
     if (isStaticImage) {
-      if (output.skillPoint > 0) {
+      if (isSkillPointValid) {
         this.lastConfirmedSkillPoint = output.skillPoint;
       }
     } else {
-      if (output.skillPoint > 0) {
+      if (isSkillPointValid) {
         if (
           this.candidateSkillPoint &&
           this.candidateSkillPoint.val === output.skillPoint &&
