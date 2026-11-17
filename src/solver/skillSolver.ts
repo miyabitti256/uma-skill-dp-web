@@ -483,7 +483,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
         const offset = state * stride;
         for (let sp = 0; sp <= reached; sp++) {
           const val = dp[offset + sp];
-          if (val > bestGrade) {
+          if (val > bestGrade || (val === bestGrade && sp < bestSp)) {
             bestGrade = val;
             bestState = state;
             bestSp = sp;

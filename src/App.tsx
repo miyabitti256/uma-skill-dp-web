@@ -10,6 +10,7 @@ import { MasterStore } from './data/masterStore.ts';
 import { CaptureManager, CaptureSourceType } from './capture/captureManager.ts';
 import { SkillSolverAdapter } from './solver/solverAdapter.ts';
 import { RecognitionWorkerPool } from './worker/recognitionWorkerPool.ts';
+import { mergeRecognizedSkills } from './worker/skillMerge.ts';
 import {
   ScreenMode,
   AptitudeState,
@@ -175,49 +176,13 @@ function App() {
           }
 
           // スキルリストの蓄積更新（参照同一フレームは O(1) スキップ・イミュータブル更新）
-          if (msg.detectedSkills.length > 0 && msg.detectedSkills !== lastDetectedSkillsRef.current) {
+          if (
+            (msg.detectedSkills.length > 0 || (lastDetectedSkillsRef.current?.length ?? 0) > 0) &&
+            msg.detectedSkills !== lastDetectedSkillsRef.current
+          ) {
             lastDetectedSkillsRef.current = msg.detectedSkills;
             const incomingSkills = msg.detectedSkills;
-            setSkills((prev) => {
-              const prevMap = new Map<number, DetectedSkillItem>();
-              for (const p of prev) prevMap.set(p.id, p);
-
-              let hasChanged = prev.length !== incomingSkills.length;
-              const nextList: DetectedSkillItem[] = [];
-
-              for (const s of incomingSkills) {
-                const existing = prevMap.get(s.id);
-                if (existing) {
-                  const isRefreshed = s.lastSeenTimestamp > existing.lastSeenTimestamp;
-                  const nextState = isRefreshed ? s.state : existing.state;
-                  const nextCost = isRefreshed ? s.recognizedCost : existing.recognizedCost;
-                  const nextTs = isRefreshed ? s.lastSeenTimestamp : existing.lastSeenTimestamp;
-
-                  if (nextState !== existing.state || nextCost !== existing.recognizedCost) {
-                    hasChanged = true;
-                  }
-                  if (
-                    nextState === existing.state &&
-                    nextCost === existing.recognizedCost &&
-                    nextTs === existing.lastSeenTimestamp
-                  ) {
-                    nextList.push(existing);
-                  } else {
-                    nextList.push({
-                      ...existing,
-                      state: nextState,
-                      recognizedCost: nextCost,
-                      lastSeenTimestamp: nextTs,
-                    });
-                  }
-                } else {
-                  hasChanged = true;
-                  nextList.push(s);
-                }
-              }
-
-              return hasChanged ? nextList : prev;
-            });
+            setSkills((prev) => mergeRecognizedSkills(prev, incomingSkills));
           }
           break;
         }

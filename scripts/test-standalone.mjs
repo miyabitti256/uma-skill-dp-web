@@ -6,6 +6,7 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { ImageRecognizer } from '../src/worker/imageRecognizer.ts';
 import { RecognitionAggregator } from '../src/worker/recognitionAggregator.ts';
+import { mergeRecognizedSkills } from '../src/worker/skillMerge.ts';
 import { RecognitionWorkerPool, determineWorkerPoolSize } from '../src/worker/recognitionWorkerPool.ts';
 import { CaptureManager } from '../src/capture/captureManager.ts';
 import { TypeScriptSkillSolver } from '../src/solver/skillSolver.ts';
@@ -1211,5 +1212,219 @@ describe('Exhausted SP update', () => {
 
     // OCR失敗 (skillPointValid=false) の 0 は確定値に影響しない
     assert.equal(agg.processOutput(frame(0, false)).detectedSkillPoint, 0);
+  });
+});
+
+// 16. Review指出エッジケース回帰テスト (◎->[-]戻し / 後出し適性ポップアップ / DP最小消費SPタイブレーク)
+describe('Review Edge Cases (◎ Revert, Late CharaDetail Dedup, Min-SP Tiebreak)', () => {
+  const masterData = JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'));
+  const masterStore = new MasterStore(masterData);
+  const defaultAptitudes = {
+    turf: 'A',
+    dirt: 'G',
+    short: 'A',
+    mile: 'A',
+    middle: 'A',
+    long: 'A',
+    nige: 'A',
+    senkou: 'A',
+    sashi: 'A',
+    oikomi: 'A',
+  };
+
+  test('resets synthetic ◎ state back to unselected when [-] reverts group to ○ unselected without clobbering acquired ◎', () => {
+    // What: ◎を選択後に[-]で○（未選択）へ戻した場合に合成された◎もunselectedへ戻り、ソルバー候補から消えないこと。
+    // また、既に本取得(acquired)された◎がある場合は未選択○観測で上書きされないこと。
+    const agg = new RecognitionAggregator(masterStore);
+    const cardFrame = (cards) => ({
+      screenType: 'スキル獲得説明省略表示',
+      screenMode: 'compact',
+      skillPoint: 1000,
+      skillPointValid: true,
+      cards,
+    });
+
+    // 1. まず ○ (右回り○: 200012, needSp=54) を2フレーム観測
+    const singleUns = { skillId: 200012, name: '右回り○', needSp: 54, state: 'unselected', dist: 10, box: { top: 0, bottom: 90, height: 90 } };
+    agg.processOutput(cardFrame([singleUns]));
+    agg.processOutput(cardFrame([singleUns]));
+
+    // 2. [+] で ◎ (右回り◎: 200011, selected) に変化し2フレーム観測
+    const doubleSel = { skillId: 200011, name: '右回り◎', needSp: 0, state: 'selected', dist: 10, box: { top: 0, bottom: 90, height: 90 } };
+    agg.processOutput(cardFrame([doubleSel]));
+    let res = agg.processOutput(cardFrame([doubleSel]));
+    assert.equal(res.detectedSkills.find((s) => s.id === 200011)?.state, 'selected');
+    assert.equal(res.detectedSkills.find((s) => s.id === 200012)?.state, 'selected');
+
+    // 3. [-] で ○ (unselected, needSp=54) まで戻した状態を2フレーム観測 -> ○と◎の両方が unselected に戻る
+    agg.processOutput(cardFrame([singleUns]));
+    res = agg.processOutput(cardFrame([singleUns]));
+    assert.equal(res.detectedSkills.find((s) => s.id === 200012)?.state, 'unselected');
+    assert.equal(res.detectedSkills.find((s) => s.id === 200011)?.state, 'unselected');
+
+    // ソルバー上で ○ または ◎ が推奨候補に含まれること（◎ selected 残留で両方消えないこと）
+    const solver = new TypeScriptSkillSolver(masterStore);
+    const solved = solver.solve(res.detectedSkills, {
+      availableSp: 200,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.ok(
+      solved.recommendedSkills.some((r) => r.skill.id === 200012 || r.skill.id === 200011),
+      'Reverted ○/◎ group must remain eligible for solver recommendation'
+    );
+
+    // 4. acquired 保護テスト: ○ unselected で既に acquired な ◎ を上書きしないこと
+    const aggAcq = new RecognitionAggregator(masterStore);
+    const doubleAcq = { skillId: 200011, name: '右回り◎', needSp: 0, state: 'acquired', dist: 10, box: { top: 0, bottom: 90, height: 90 } };
+    aggAcq.processOutput(cardFrame([doubleAcq]));
+    aggAcq.processOutput(cardFrame([doubleAcq]));
+    aggAcq.processOutput(cardFrame([singleUns]));
+    const resAcq = aggAcq.processOutput(cardFrame([singleUns]));
+    assert.equal(resAcq.detectedSkills.find((s) => s.id === 200011)?.state, 'acquired');
+  });
+
+  test('removes same-name 900k inheritable unique skill when ウマ娘詳細適性ポップアップ is opened after scanning skill list', () => {
+    // What: スキル一覧を先にスキャンして同名継承固有(900671)が蓄積された後に適性ポップアップ(106701)を開いても、重複継承固有が除外されること。
+    const agg = new RecognitionAggregator(masterStore);
+    const fake900k = {
+      skillId: 900671,
+      name: '晦冥を照らせ永遠の耀き',
+      needSp: 180,
+      state: 'unselected',
+      dist: 10,
+      box: { top: 0, bottom: 90, height: 90 },
+    };
+    agg.processOutput({
+      screenType: 'スキル獲得説明省略表示',
+      screenMode: 'compact',
+      skillPoint: 1000,
+      skillPointValid: true,
+      cards: [fake900k],
+    });
+    let res = agg.processOutput({
+      screenType: 'スキル獲得説明省略表示',
+      screenMode: 'compact',
+      skillPoint: 1000,
+      skillPointValid: true,
+      cards: [fake900k],
+    });
+    assert.ok(res.detectedSkills.some((s) => s.id === 900671));
+
+    // 後からウマ娘詳細適性ポップアップを開く (cards: [], detectedCardId: 106701)
+    res = agg.processOutput({
+      screenType: 'ウマ娘詳細適性ポップアップ',
+      screenMode: 'chara_detail',
+      skillPoint: 0,
+      skillPointValid: false,
+      detectedCardId: 106701,
+      cards: [],
+    });
+    assert.equal(res.detectedCardId, 106701);
+    assert.equal(
+      res.detectedSkills.some((s) => s.id === 900671),
+      false,
+      'Inheritable duplicate 900671 matching card 106701 uniqueSkillId must be purged even with empty cards'
+    );
+  });
+
+  test('DP prefers lower spent SP when two evolution states achieve the exact same max grade', () => {
+    // What: 進化状態ごとに同点(val === bestGrade)になる場合、後から評価される状態でも消費SPが小さい解(sp < bestSp)を採用すること。
+    const solver = new TypeScriptSkillSolver(masterStore);
+    const goldBase = masterStore.skillsById.get(200511); // 全身全霊 (cardId=100101 Lv5進化で633pt)
+    assert.ok(goldBase);
+    const goldSkill = {
+      id: goldBase.id,
+      name: goldBase.name,
+      recognizedCost: 180,
+      baseCost: goldBase.needSkillPoint,
+      gradeValue: goldBase.gradeValue,
+      rarity: goldBase.rarity,
+      groupId: goldBase.groupId,
+      groupRate: goldBase.groupRate,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve: false,
+      lastSeenTimestamp: 0,
+    };
+    const highCostWhite = {
+      id: 990003,
+      name: '高コスト白スキル',
+      recognizedCost: 220,
+      baseCost: 220,
+      gradeValue: 633,
+      rarity: 1,
+      groupId: 990003,
+      groupRate: 1,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve: false,
+      lastSeenTimestamp: 0,
+    };
+
+    const solved = solver.solve([highCostWhite, goldSkill], {
+      availableSp: 220,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(solved.maxGradeValue, 633);
+    assert.equal(solved.spentSp, 180, 'Must prefer 180 SP evolved 全身全霊 over 220 SP tie');
+    assert.deepEqual(solved.recommendedSkills.map((r) => r.skill.id), [200511]);
+  });
+});
+
+// 17. mergeRecognizedSkills 回帰テスト (同一ミリ秒更新ロスト防止・空配列反映)
+describe('mergeRecognizedSkills (Same-Millisecond Update & Empty Array Reflection)', () => {
+  const makeItem = (overrides = {}) => ({
+    id: 200012,
+    name: '右回り○',
+    recognizedCost: 54,
+    baseCost: 90,
+    gradeValue: 129,
+    rarity: 1,
+    groupId: 20001,
+    groupRate: 1,
+    state: 'unselected',
+    isLocked: false,
+    isExcluded: false,
+    canEvolve: false,
+    lastSeenTimestamp: 1700000000000,
+    firstSeenOrder: 1,
+    ...overrides,
+  });
+
+  test('applies state and recognizedCost updates when lastSeenTimestamp matches existing millisecond', () => {
+    // What: 2ワーカー並列処理などで Date.now() が同一ミリ秒になった場合も state/recognizedCost 更新をロストせず、isLocked/isExcluded は維持すること。
+    const prev = [makeItem({ isLocked: true, isExcluded: false, state: 'unselected', recognizedCost: 54 })];
+    const incoming = [makeItem({ isLocked: false, state: 'selected', recognizedCost: 0, lastSeenTimestamp: 1700000000000 })];
+
+    const merged = mergeRecognizedSkills(prev, incoming);
+    assert.notEqual(merged, prev, 'Merged array must update reference when state/cost changed on same millisecond');
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0].state, 'selected');
+    assert.equal(merged[0].recognizedCost, 0);
+    assert.equal(merged[0].isLocked, true, 'Must preserve user lock flag');
+    assert.equal(merged[0].isExcluded, false, 'Must preserve user exclude flag');
+
+    // 同一内容・同一タイムスタンプの場合は既存参照を返すこと
+    const unchanged = mergeRecognizedSkills(merged, [
+      makeItem({ state: 'selected', recognizedCost: 0, lastSeenTimestamp: 1700000000000 }),
+    ]);
+    assert.equal(unchanged, merged, 'Must preserve array reference when nothing changed');
+  });
+
+  test('clears previous skills when incoming skills becomes empty (e.g. 900k deduplication)', () => {
+    // What: 重複継承固有の除去などで incomingSkills が空配列になった場合、UI側のスキル配列も空配列に追従すること。
+    const prev = [makeItem({ id: 900671, name: '晦冥を照らせ永遠の耀き' })];
+    const cleared = mergeRecognizedSkills(prev, []);
+    assert.deepEqual(cleared, []);
+
+    const alreadyEmpty = [];
+    assert.equal(mergeRecognizedSkills(alreadyEmpty, []), alreadyEmpty);
   });
 });

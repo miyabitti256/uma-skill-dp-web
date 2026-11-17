@@ -101,6 +101,19 @@ export class RecognitionAggregator {
     }
   }
 
+  /**
+   * 育成ウマ娘自身の固有スキルと同名の継承固有 (ID 900000 台) を蓄積マップから除去する。
+   */
+  private removeInheritableDuplicatesByName(skillName: string): void {
+    for (const [accId, acc] of this.accumulatedSkills.entries()) {
+      if (accId >= 900000 && accId < 1000000 && acc.name === skillName) {
+        this.accumulatedSkills.delete(accId);
+        this.skillMeta.delete(accId);
+        this.skillsDirty = true;
+      }
+    }
+  }
+
   public processOutput(
     output: RecognitionOutput,
     isStaticImage = false
@@ -148,6 +161,13 @@ export class RecognitionAggregator {
 
     if (output.detectedCardId && output.screenType === 'ウマ娘詳細適性ポップアップ') {
       this.lastValidCardId = output.detectedCardId;
+      const activeCard = this.masterStore.cardsById.get(this.lastValidCardId);
+      const activeUniqueSkill = activeCard
+        ? this.masterStore.skillsById.get(activeCard.uniqueSkillId)
+        : undefined;
+      if (activeUniqueSkill) {
+        this.removeInheritableDuplicatesByName(activeUniqueSkill.name);
+      }
     }
 
     const isSkillPointValid = output.skillPointValid ?? output.skillPoint > 0;
@@ -209,13 +229,7 @@ export class RecognitionAggregator {
             continue;
           }
         } else if (rarity >= 3) {
-          for (const [accId, acc] of this.accumulatedSkills.entries()) {
-            if (accId >= 900000 && accId < 1000000 && acc.name === card.name) {
-              this.accumulatedSkills.delete(accId);
-              this.skillMeta.delete(accId);
-              this.skillsDirty = true;
-            }
-          }
+          this.removeInheritableDuplicatesByName(card.name);
         }
 
         const existing = this.accumulatedSkills.get(card.skillId);
@@ -283,7 +297,18 @@ export class RecognitionAggregator {
               } else {
                 const existingDouble = this.accumulatedSkills.get(doubleSkill.id)!;
                 const doubleMeta = this.skillMeta.get(doubleSkill.id);
-                if (
+                // Why not !== 'unselected': 本取得済(acquired)の上位◎を誤って未選択に戻さないよう selected のみリセットする
+                if (cardState === 'unselected' && existingDouble.state === 'selected') {
+                  existingDouble.state = 'unselected';
+                  if (doubleMeta?.synthetic || existingDouble.recognizedCost === 0) {
+                    existingDouble.recognizedCost = doubleCost;
+                  }
+                  if (doubleMeta) {
+                    this.skillMeta.set(doubleSkill.id, { synthetic: doubleMeta.synthetic });
+                  }
+                  existingDouble.lastSeenTimestamp = Date.now();
+                  this.skillsDirty = true;
+                } else if (
                   doubleMeta?.synthetic &&
                   cardState === 'unselected' &&
                   existingDouble.state === 'unselected' &&

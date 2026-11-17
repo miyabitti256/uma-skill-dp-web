@@ -1285,14 +1285,15 @@ export class ImageRecognizer {
     let th: number;
 
     if (screenType === '育成完了確認（ホーム画面）') {
+      const effH = h - titlebarOffsetY;
       if (w > h) {
-        y0 = Math.floor(h * 0.83);
-        y1 = Math.floor(h * 0.865);
+        y0 = Math.floor(effH * 0.83) + titlebarOffsetY;
+        y1 = Math.floor(effH * 0.865) + titlebarOffsetY;
         x0 = Math.floor(w * 0.225);
         x1 = Math.floor(w * 0.265);
       } else {
-        y0 = Math.floor(h * 0.835);
-        y1 = Math.floor(h * 0.865);
+        y0 = Math.floor(effH * 0.835) + titlebarOffsetY;
+        y1 = Math.floor(effH * 0.865) + titlebarOffsetY;
         x0 = Math.floor(w * 0.295);
         x1 = Math.floor(w * 0.405);
       }
@@ -1422,7 +1423,7 @@ export class ImageRecognizer {
 
     if (w > h) {
       const scaleH = (h - titlebarOffsetY) / 1080.0;
-      if (Math.abs(w - 1583) <= 50) {
+      if (Math.abs(w - 1583) <= 5 && Math.abs(h - 890) <= 5) {
         const scaleW = w / 1583.0;
         cLeft = Math.round(211 * scaleW);
         cRight = Math.round(683 * scaleW);
@@ -1692,7 +1693,8 @@ export class ImageRecognizer {
       y2 = Math.floor(ch * 0.72);
     }
     const x1 = Math.floor(cw * 0.78);
-    const x2 = Math.floor(cw * 0.93);
+    // Why 0.96: 残SP不足の暗色[+]ボタンは右側0.92..0.95*cw付近に緑色域があり0.93では見切れるため
+    const x2 = Math.floor(cw * 0.96);
 
     const roiW = x2 - x1;
     const roiH = y2 - y1;
@@ -1700,7 +1702,7 @@ export class ImageRecognizer {
       return { needSp: 0, state: 'acquired', valid: false };
     }
 
-    // 緑文字「Pt」のカットオフ検出
+    // 緑文字「Pt」/「+」ボタンのカットオフ検出（SP不足の暗色[+] rgb~(118..141, 145..169, 58..80) も捕捉）
     const greenColsCount = new Int32Array(roiW);
     let totalGreenPixels = 0;
     for (let y = 0; y < roiH; y++) {
@@ -1710,7 +1712,7 @@ export class ImageRecognizer {
         const r = cardData[idx];
         const g = cardData[idx + 1];
         const b = cardData[idx + 2];
-        if (g > 150 && g > r * 1.1 && g > b * 1.1) {
+        if (g > 120 && g > r * 1.12 && g > b * 1.25) {
           greenColsCount[x]++;
           totalGreenPixels++;
         }
@@ -2001,7 +2003,8 @@ export class ImageRecognizer {
             }
           }
         }
-        if (totPx > 0 && totDark / totPx >= 0.42) {
+        // Why 0.46: 1280x720 等では単丸○の輪郭滲みで占有率が ~0.436 まで上がる一方、二重丸◎は >= 0.55 のため誤反転を防ぐ
+        if (totPx > 0 && totDark / totPx >= 0.46) {
           isDoubleCircle = true;
         }
       }
@@ -2279,14 +2282,13 @@ export class ImageRecognizer {
         }
 
         // Worst-Character Gate: 1文字でも大きく乖離している候補を弾く
-        let worstCharHam: number;
-        if (s.name.length >= 4) {
-          worstCharHam = Math.max(optH0, optH1, optT0, optT1);
-        } else {
-          worstCharHam = Math.max(optH0, optH1, optT1);
-        }
+        // Why not 76 for T1 on ◎: 圧縮フレームや暗い背景では二重丸◎(T1)のみビットが割れやすく、漢字部分が一致していても誤棄却されるため
+        const bodyWorst =
+          s.name.length >= 4 ? Math.max(optH0, optH1, optT0) : Math.max(optH0, optH1);
+        const worstCharHam = Math.max(bodyWorst, optT1);
+        const tailLimit = s.name.endsWith('◎') ? 105 : 76;
 
-        if (worstCharHam > 76) {
+        if (bodyWorst > 76 || optT1 > tailLimit) {
           continue;
         }
 
@@ -2752,7 +2754,7 @@ export class ImageRecognizer {
       // スキル獲得画面で最初から獲得済なのは育成ウマ娘自身の固有スキル (rarity >= 3) のみ。
       // 通常スキル (rarity <= 2) で緑Ptもピンクも無い枠は 100% ハルシネーションなので棄却！
       if (spResult.state === 'acquired') {
-        if (rarity < 3 || dist > 215) {
+        if (rarity < 3 || dist > 260) {
           continue;
         }
       }
