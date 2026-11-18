@@ -5,6 +5,7 @@ import { OptimizationPanel } from './components/OptimizationPanel.tsx';
 import { RecognizedSkillsPanel } from './components/RecognizedSkillsPanel.tsx';
 import { CapturePreview } from './components/CapturePreview.tsx';
 import { UsageModal } from './components/UsageModal.tsx';
+import { BugReportModal } from './components/BugReportModal.tsx';
 
 import { MasterStore } from './data/masterStore.ts';
 import { CaptureManager, CaptureSourceType } from './capture/captureManager.ts';
@@ -76,7 +77,7 @@ function App() {
   const [screenMode, setScreenMode] = useState<ScreenMode>('idle');
   const [fps, setFps] = useState(0);
   const [latencyMs, setLatencyMs] = useState(0);
-  const [isUsageOpen, setIsUsageOpen] = useState(false);
+  const [activeModal, setActiveModal] = useState<'usage' | 'bugReport' | null>(null);
 
   // 育成条件（初期値: SP=0, 適性=すべてG）
   const [availableSp, setAvailableSp] = useState<number>(0);
@@ -378,11 +379,15 @@ function App() {
   }, []);
 
   const handleOpenUsage = useCallback(() => {
-    setIsUsageOpen(true);
+    setActiveModal('usage');
   }, []);
 
-  const handleCloseUsage = useCallback(() => {
-    setIsUsageOpen(false);
+  const handleOpenBugReport = useCallback(() => {
+    setActiveModal('bugReport');
+  }, []);
+
+  const handleCloseModal = useCallback(() => {
+    setActiveModal(null);
   }, []);
 
   return (
@@ -398,6 +403,7 @@ function App() {
         onStopCapture={handleStopCapture}
         onImportFile={handleImportFile}
         onOpenUsage={handleOpenUsage}
+        onOpenBugReport={handleOpenBugReport}
       />
 
       {errorMessage && (
@@ -470,17 +476,10 @@ function App() {
         <span>
           非公式ツールです。「ウマ娘 プリティーダービー」に関する著作権・商標権は株式会社Cygamesに帰属します。
         </span>
-        <a
-          href="https://github.com/miyabitti256/uma-skill-dp-web/issues/new"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-bold text-[#3c8604] hover:underline shrink-0"
-        >
-          バグ報告はこちら (GitHub Issues)
-        </a>
       </footer>
 
-      <UsageModal isOpen={isUsageOpen} onClose={handleCloseUsage} />
+      <UsageModal isOpen={activeModal === 'usage'} onClose={handleCloseModal} />
+      <BugReportModal isOpen={activeModal === 'bugReport'} onClose={handleCloseModal} />
     </div>
   );
 }

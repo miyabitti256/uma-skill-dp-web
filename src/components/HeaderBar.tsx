@@ -13,6 +13,7 @@ interface HeaderBarProps {
   onStopCapture: () => void;
   onImportFile: (file: File) => void;
   onOpenUsage: () => void;
+  onOpenBugReport: () => void;
 }
 
 function getScreenModeBadge(mode: ScreenMode, source: CaptureSourceType) {
@@ -61,6 +62,7 @@ export function HeaderBar({
   onStopCapture,
   onImportFile,
   onOpenUsage,
+  onOpenBugReport,
 }: HeaderBarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modeBadge = getScreenModeBadge(screenMode, captureSource);
@@ -144,16 +146,15 @@ export function HeaderBar({
           使い方
         </button>
 
-        <a
-          href="https://github.com/miyabitti256/uma-skill-dp-web/issues/new"
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={onOpenBugReport}
           className="uma-btn px-2.5 py-1 text-xs font-bold flex items-center gap-1"
-          title="GitHub Issues でバグや要望を報告"
+          title="バグ報告や要望を送信"
         >
           <Bug className="w-3.5 h-3.5 text-[#e43f8c]" />
           バグ報告はこちら
-        </a>
+        </button>
       </div>
     </header>
   );
