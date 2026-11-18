@@ -1,0 +1,56 @@
+name: バグ報告
+description: スキル認識・SP読み取り・最適化結果などの不具合を報告します
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ご報告ありがとうございます。入力は **「何が起きましたか？」のみ必須** で、その他は分かる範囲で構いません。
+        ※ 他ウィンドウやトレーナーID等の映り込みを避けたい場合は、[X (@wister_fujicco)](https://x.com/wister_fujicco) の DM 経由でも構いません。
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 何が起きましたか？
+      description: 認識されないスキル名・誤認識された内容・期待と違った点などをご記入ください。
+      placeholder: "例: 説明省略ONで「〇〇」が認識されない / 所持SPより高いスキルが表示されない"
+    validations:
+      required: true
+
+  - type: textarea
+    id: media
+    attributes:
+      label: スクリーンショット・動画（任意・あると非常に助かります）
+      description: |
+        可能であれば **トリミング・縮小なしの原寸PNG**（ゲーム画面と本ツールの結果・モード表示がわかるもの）、
+        スクロールや操作時の不具合は **短い動画 (MP4 等)** をこの欄へドラッグ＆ドロップしてください。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: description_omitted
+    attributes:
+      label: ゲーム内の「説明省略」設定（任意）
+      options:
+        - わからない / 未確認
+        - ON（説明省略表示）
+        - OFF（通常表示）
+      default: 0
+    validations:
+      required: false
+
+  - type: input
+    id: environment
+    attributes:
+      label: プレイ環境・取り込み方法・ブラウザ（任意）
+      placeholder: "例: DMM版(ウィンドウ) / ウィンドウ共有 / Chrome"
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順（任意）
+      placeholder: "例: 1. 詳細ポップアップを開かずにスキル画面へ進む 2. 下までスクロールする"
+    validations:
+      required: false

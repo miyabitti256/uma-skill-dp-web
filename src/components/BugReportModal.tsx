@@ -1,4 +1,5 @@
-import { ExternalLink } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, Copy, ExternalLink } from 'lucide-react';
 import { UmaModal } from './UmaModal.tsx';
 
 interface BugReportModalProps {
@@ -26,8 +27,8 @@ const REPORT_OPTIONS = [
   {
     id: 'github',
     name: 'GitHub Issues',
-    sub: '新規 Issue を作成',
-    url: 'https://github.com/miyabitti256/uma-skill-dp-web/issues/new',
+    sub: 'フォームから報告',
+    url: 'https://github.com/miyabitti256/uma-skill-dp-web/issues/new?template=bug_report.yml',
     icon: GitHubMark,
   },
   {
@@ -39,20 +40,62 @@ const REPORT_OPTIONS = [
   },
 ] as const;
 
+const X_REPORT_TEMPLATE = `【現象】
+【説明省略】ON / OFF
+【環境】DMM / Steam・ブラウザ:
+【再現手順】
+※可能であれば原寸スクショ(PNG)や動画を添付してください`;
+
 /**
- * バグ報告先（GitHub Issues / X）を選択する専用モーダル。
+ * バグ報告先（GitHub Issues / X）の選択と報告ガイドライン・定型文コピーを提供する専用モーダル。
  */
 export function BugReportModal({ isOpen, onClose }: BugReportModalProps) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleClose = () => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setCopied(false);
+    onClose();
+  };
+
+  const handleCopyTemplate = async () => {
+    try {
+      await navigator.clipboard.writeText(X_REPORT_TEMPLATE);
+    } catch {
+      // クリップボード権限が無い環境でも UI 表示上は完了フィードバックを出さないよう return
+      return;
+    }
+    setCopied(true);
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+    }
+    timerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      timerRef.current = null;
+    }, 2000);
+  };
+
   return (
     <UmaModal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       title="バグ報告"
       titleId="bug-report-modal-title"
-      maxWidthClass="max-w-sm"
+      maxWidthClass="max-w-lg"
     >
-      <p className="text-center font-bold text-[#5b4333]">報告方法を選択してください</p>
-
       <div className="grid grid-cols-2 gap-2.5">
         {REPORT_OPTIONS.map((opt) => {
           const Icon = opt.icon;
@@ -62,7 +105,7 @@ export function BugReportModal({ isOpen, onClose }: BugReportModalProps) {
               href={opt.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="uma-btn px-3 py-3.5 flex flex-col items-center justify-center gap-1.5 text-center hover:border-[#76c30f] hover:bg-[#f1fbe8] group"
+              className="uma-btn px-3 py-3 flex flex-col items-center justify-center gap-1.5 text-center hover:border-[#76c30f] hover:bg-[#f1fbe8] group"
             >
               <span className="w-10 h-10 rounded-full bg-white border border-[#d6d3dc] group-hover:border-[#76c30f] flex items-center justify-center text-[#5b4333] shadow-xs">
                 <Icon />
@@ -75,6 +118,49 @@ export function BugReportModal({ isOpen, onClose }: BugReportModalProps) {
             </a>
           );
         })}
+      </div>
+
+      <div className="bg-white rounded-lg border border-[#d6d3dc] p-2.5 space-y-2">
+        <div className="space-y-1">
+          <h3 className="font-extrabold text-[#3c8604]">バグ報告のガイドライン</h3>
+          <ul className="list-disc pl-4 space-y-0.5 font-medium">
+            <li>
+              <strong>スクショ / 動画（推奨）</strong>: 可能な限りリサイズなしの<strong>原寸 PNG</strong>や短い録画（DM 送付も可）があると迅速に再現・修正できます。
+            </li>
+            <li>
+              <strong>発生状況</strong>: <strong>説明省略 ON/OFF</strong>・抜ける/誤認識するスキル名・詳細画面を開いたか等を分かる範囲でお知らせください。
+            </li>
+            <li>
+              <strong>環境</strong>: DMM / Steam・ウィンドウ/全画面・使用ブラウザなど。
+            </li>
+          </ul>
+        </div>
+
+        <div className="border-t border-[#e8e5ee] pt-2 space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="font-extrabold text-[#5b4333]">X 報告用テンプレート（コピペしてご利用ください）</h4>
+            <button
+              type="button"
+              onClick={handleCopyTemplate}
+              className="uma-btn px-2.5 py-0.5 text-[11px] font-extrabold inline-flex items-center gap-1 shrink-0"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3 h-3 text-[#3c8604]" />
+                  コピーしました
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3 text-[#5b4333]" />
+                  コピー
+                </>
+              )}
+            </button>
+          </div>
+          <pre className="uma-sp-box px-2.5 py-2 text-[11px] font-mono text-[#5b4333] whitespace-pre-wrap leading-snug select-all">
+            {X_REPORT_TEMPLATE}
+          </pre>
+        </div>
       </div>
     </UmaModal>
   );
