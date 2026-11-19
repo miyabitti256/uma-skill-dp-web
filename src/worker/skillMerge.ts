@@ -21,14 +21,22 @@ export function mergeRecognizedSkills(
       const isRefreshed = s.lastSeenTimestamp >= existing.lastSeenTimestamp;
       const nextState = isRefreshed ? s.state : existing.state;
       const nextCost = isRefreshed ? s.recognizedCost : existing.recognizedCost;
+      const nextCanEvolve = isRefreshed
+        ? Boolean(s.canEvolve || existing.canEvolve)
+        : existing.canEvolve;
       const nextTs = isRefreshed ? s.lastSeenTimestamp : existing.lastSeenTimestamp;
 
-      if (nextState !== existing.state || nextCost !== existing.recognizedCost) {
+      if (
+        nextState !== existing.state ||
+        nextCost !== existing.recognizedCost ||
+        nextCanEvolve !== existing.canEvolve
+      ) {
         hasChanged = true;
       }
       if (
         nextState === existing.state &&
         nextCost === existing.recognizedCost &&
+        nextCanEvolve === existing.canEvolve &&
         nextTs === existing.lastSeenTimestamp
       ) {
         nextList.push(existing);
@@ -37,6 +45,7 @@ export function mergeRecognizedSkills(
           ...existing,
           state: nextState,
           recognizedCost: nextCost,
+          canEvolve: nextCanEvolve,
           lastSeenTimestamp: nextTs,
         });
       }

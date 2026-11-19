@@ -29,6 +29,13 @@ export interface ScenarioEvolutionItem {
   evolvedSkillId: number;
 }
 
+export interface SuccessionEvolutionItem {
+  upgradeId?: number;
+  cardId: number; // 継承元ウマ娘カードID（親として設定）
+  baseSkillId: number;
+  evolvedSkillId: number;
+}
+
 export interface PlayableCardItem {
   cardId: number;
   cardTitle: string;
@@ -41,5 +48,6 @@ export interface SkillMasterData {
   charaEvolutions: CharaEvolutionItem[];
   scenarios: ScenarioItem[];
   scenarioEvolutions: ScenarioEvolutionItem[];
+  successionEvolutions?: SuccessionEvolutionItem[];
   cards: PlayableCardItem[];
 }

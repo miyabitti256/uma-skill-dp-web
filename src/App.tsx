@@ -248,7 +248,7 @@ function App() {
     const store = MasterStore.getInstance();
     let changed = false;
     const next = skills.map((s) => {
-      const canEvolve = store.isSkillEvolvable(s.id, selectedCardId, selectedScenarioId);
+      const canEvolve = store.isSkillEvolvable(s.id, selectedCardId, selectedScenarioId, s.canEvolve);
       if (canEvolve !== s.canEvolve) {
         changed = true;
         return { ...s, canEvolve };

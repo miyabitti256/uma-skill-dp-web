@@ -19,7 +19,7 @@ export interface RecommendedSkill {
 }
 
 export interface EvolutionRecommendation {
-  slotType: 'chara_lv3' | 'chara_lv5' | 'scenario';
+  slotType: 'chara_lv3' | 'chara_lv5' | 'scenario' | 'succession';
   slotName: string;
   baseSkillName: string;
   baseSkillId: number;

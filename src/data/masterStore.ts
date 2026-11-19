@@ -5,6 +5,7 @@ import type {
   ScenarioItem,
   CharaEvolutionItem,
   ScenarioEvolutionItem,
+  SuccessionEvolutionItem,
 } from '../types/master.ts';
 
 export class MasterStore {
@@ -14,6 +15,7 @@ export class MasterStore {
   public skillsByGroupId = new Map<number, SkillMasterItem[]>();
   public charaEvolutionsByCardId = new Map<number, CharaEvolutionItem[]>();
   public scenarioEvolutionsByScenarioId = new Map<number, ScenarioEvolutionItem[]>();
+  public successionEvolutionsByBaseSkillId = new Map<number, SuccessionEvolutionItem[]>();
   public cardsById = new Map<number, PlayableCardItem>();
   public scenariosById = new Map<number, ScenarioItem>();
 
@@ -48,6 +50,7 @@ export class MasterStore {
     this.skillsByGroupId.clear();
     this.charaEvolutionsByCardId.clear();
     this.scenarioEvolutionsByScenarioId.clear();
+    this.successionEvolutionsByBaseSkillId.clear();
     this.cardsById.clear();
     this.scenariosById.clear();
 
@@ -84,15 +87,40 @@ export class MasterStore {
       list.push(evo);
       this.scenarioEvolutionsByScenarioId.set(evo.scenarioId, list);
     }
+
+    for (const evo of data.successionEvolutions ?? []) {
+      const list = this.successionEvolutionsByBaseSkillId.get(evo.baseSkillId) || [];
+      list.push(evo);
+      this.successionEvolutionsByBaseSkillId.set(evo.baseSkillId, list);
+    }
   }
 
   /**
-   * 金スキル（rarity === 2）が育成ウマ娘またはシナリオの進化対象であるかを判定
+   * 金スキル（rarity === 2）が育成ウマ娘またはシナリオの進化対象であるか、
+   * 継承固有スキル（rarity === 1）が進化可能ラベル付きで継承進化対象であるかを判定
    */
-  public isSkillEvolvable(skillId: number, cardId?: number, scenarioId?: number): boolean {
+  public isSkillEvolvable(
+    skillId: number,
+    cardId?: number,
+    scenarioId?: number,
+    hasEvoBadge = true
+  ): boolean {
     const skill = this.skillsById.get(skillId);
-    if (!skill || skill.rarity !== 2) return false;
-    if (!this.data) return false;
+    if (!skill || !this.data) return false;
+
+    // 継承進化チェック (対象となる継承固有スキル: rarity === 1 かつ実機画面上で進化条件達成/進化可能ラベルが表示されていること)
+    if (skill.rarity === 1) {
+      if (!hasEvoBadge) return false;
+      const succEvos = this.successionEvolutionsByBaseSkillId.get(skillId);
+      if (!succEvos || succEvos.length === 0) return false;
+      // 継承元ウマ娘本人を選択している場合は自身の固有スキルを継承できないため除外
+      if (cardId !== undefined && cardId > 0) {
+        return succEvos.some((e) => e.cardId !== cardId);
+      }
+      return true;
+    }
+
+    if (skill.rarity !== 2) return false;
 
     // キャラ進化チェック (育成ウマ娘が選択されている場合のみ)
     if (cardId !== undefined && cardId > 0) {

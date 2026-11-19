@@ -28,6 +28,7 @@ export interface RecognizedCardResult {
   state: 'unselected' | 'selected' | 'acquired';
   dist: number;
   box: { top: number; bottom: number; height: number };
+  canEvolve?: boolean;
 }
 
 export interface RecognitionOutput {
@@ -1423,15 +1424,9 @@ export class ImageRecognizer {
 
     if (w > h) {
       const scaleH = (h - titlebarOffsetY) / 1080.0;
-      if (Math.abs(w - 1583) <= 5 && Math.abs(h - 890) <= 5) {
-        const scaleW = w / 1583.0;
-        cLeft = Math.round(211 * scaleW);
-        cRight = Math.round(683 * scaleW);
-      } else {
-        const scaleW = w / 1920.0;
-        cLeft = Math.round(276 * scaleW);
-        cRight = Math.round(829 * scaleW);
-      }
+      const scaleW = w / 1920.0;
+      cLeft = Math.round(276 * scaleW);
+      cRight = Math.round(829 * scaleW);
       yScanStart = Math.floor(200 * scaleH) + titlebarOffsetY;
       yScanEnd = Math.floor(950 * scaleH) + titlebarOffsetY;
       containerTop = Math.floor(380 * scaleH) + titlebarOffsetY;
@@ -1589,6 +1584,57 @@ export class ImageRecognizer {
   }
 
   /**
+   * カード左上の「進化条件達成」または「進化可能」バッジ有無を判定する
+   */
+  public hasEvolutionBadge(
+    img: ImageBuffer,
+    cLeft: number,
+    cw: number,
+    boxTop: number,
+    ch: number
+  ): boolean {
+    const y0 = Math.max(0, boxTop - Math.max(3, Math.round(ch * 0.055)));
+    const y1 = Math.min(img.height, boxTop + Math.max(4, Math.round(ch * 0.065)));
+    const x0 = Math.max(0, cLeft + Math.floor(cw * 0.015));
+    const x1 = Math.min(img.width, cLeft + Math.floor(cw * 0.12));
+    if (x1 <= x0 || y1 <= y0) return false;
+
+    let yellowFill = 0;
+    let brownText = 0;
+    let total = 0;
+    const { data, width: w } = img;
+    for (let y = y0; y < y1; y++) {
+      const rowOff = y * w;
+      for (let x = x0; x < x1; x++) {
+        const idx = (rowOff + x) * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        total++;
+        if (r >= 200 && g >= 180 && r >= g && r - b >= 35 && g - b >= 20) {
+          yellowFill++;
+        } else if (
+          r >= 110 &&
+          r <= 200 &&
+          g >= 55 &&
+          g <= 150 &&
+          b <= 90 &&
+          r - g >= 25 &&
+          g - b >= 20
+        ) {
+          brownText++;
+        }
+      }
+    }
+    if (total < 20) return false;
+    return (
+      yellowFill / total >= 0.25 &&
+      brownText / total >= 0.1 &&
+      (yellowFill + brownText) / total >= 0.5
+    );
+  }
+
+  /**
    * カードの必要SP OCR認識 (SP値, 状態)
    */
   public ocrCardNeedSp(
@@ -1596,7 +1642,12 @@ export class ImageRecognizer {
     cw: number,
     ch: number,
     isCompact: boolean
-  ): { needSp: number; state: 'unselected' | 'selected' | 'acquired'; valid: boolean } {
+  ): {
+    needSp: number;
+    state: 'unselected' | 'selected' | 'acquired';
+    valid: boolean;
+    isPinkAcquired?: boolean;
+  } {
     // 右側ボタン領域: カード背景や虹色装飾の誤検知を防ぐためボタン矩形に限定
     const btnX0 = Math.floor(cw * 0.78);
     const btnX1 = Math.floor(cw * 0.95);
@@ -1630,10 +1681,11 @@ export class ImageRecognizer {
     if (isPink) {
       // グレーアウト虹色カード（本体固有スキル）は isCompact/色調差/右端ノイズに関わらず常に獲得済
       if (isRainbowAcquired) {
-        return { needSp: 0, state: 'acquired', valid: true };
+        return { needSp: 0, state: 'acquired', valid: true, isPinkAcquired: true };
       }
 
-      // 「獲得済」バッジ(本体固有)もピンク地だが、右端に緑色の [-] ボタンクラスタが無く周囲が紫灰色で減光されているため selected と区別する
+      // 「獲得済」バッジ(本体固有・購入決定後の獲得済スキル)もピンク地だが、右端に緑色の [+] ボタンクラスタが無く
+      // 周囲が紫灰色またはダークグレーの減光背景のため selected と区別する
       let greenMinusCount = 0;
       let greenTotal = 0;
       const gx0 = Math.floor(cw * 0.91);
@@ -1676,7 +1728,30 @@ export class ImageRecognizer {
           }
         }
         if (bgTotal > 0 && purpleBgCount / bgTotal > 0.5) {
-          return { needSp: 0, state: 'acquired', valid: true };
+          return { needSp: 0, state: 'acquired', valid: true, isPinkAcquired: true };
+        }
+
+        let grayMinusCount = 0;
+        let minusTotal = 0;
+        const mx0 = Math.floor(cw * 0.71);
+        const mx1 = Math.floor(cw * 0.77);
+        for (let y = gy0; y < gy1; y++) {
+          const rowOffset = y * cw;
+          for (let x = mx0; x < mx1; x++) {
+            const idx = (rowOffset + x) * 4;
+            const r = cardData[idx];
+            const g = cardData[idx + 1];
+            const b = cardData[idx + 2];
+            const maxC = r > g ? (r > b ? r : b) : g > b ? g : b;
+            const minC = r < g ? (r < b ? r : b) : g < b ? g : b;
+            if (r >= 95 && r <= 170 && g >= 95 && g <= 170 && b >= 95 && b <= 175 && maxC - minC <= 22) {
+              grayMinusCount++;
+            }
+            minusTotal++;
+          }
+        }
+        if (minusTotal > 0 && grayMinusCount / minusTotal > 0.5) {
+          return { needSp: 0, state: 'acquired', valid: true, isPinkAcquired: true };
         }
       }
 
@@ -1690,7 +1765,7 @@ export class ImageRecognizer {
       y2 = Math.floor(ch * 0.7);
     } else {
       y1 = Math.floor(ch * 0.32);
-      y2 = Math.floor(ch * 0.72);
+      y2 = Math.floor(ch * 0.65);
     }
     const x1 = Math.floor(cw * 0.78);
     // Why 0.96: 残SP不足の暗色[+]ボタンは右側0.92..0.95*cw付近に緑色域があり0.93では見切れるため
@@ -1803,7 +1878,8 @@ export class ImageRecognizer {
     needSp = 0,
     isUnselected = false,
     isGoldCard = false,
-    cardState: 'unselected' | 'selected' | 'acquired' = isUnselected ? 'unselected' : 'acquired'
+    cardState: 'unselected' | 'selected' | 'acquired' = isUnselected ? 'unselected' : 'acquired',
+    isRainbowCard: boolean = cardState === 'acquired'
   ): { skillId: number; name: string; rarity: number; dist: number } {
     let ty1: number;
     let ty2: number;
@@ -2012,7 +2088,7 @@ export class ImageRecognizer {
 
     // 直近カード特徴量キャッシュ照合 (静止・低速スクロール時の再照合をスキップ)
     const fullHash = fnv1aHash(fullBytes);
-    const cacheKey = `${fullHash}_${needSp}_${isGoldCard ? 1 : 0}_${isCompact ? 1 : 0}_${isUnselected ? 1 : 0}_${cardState}_${cw < 450 ? 1 : 0}_${isDoubleCircle ? 1 : 0}_${Math.round(aspect * 100)}`;
+    const cacheKey = `${fullHash}_${needSp}_${isGoldCard ? 1 : 0}_${isCompact ? 1 : 0}_${isUnselected ? 1 : 0}_${cardState}_${isRainbowCard ? 1 : 0}_${cw < 450 ? 1 : 0}_${isDoubleCircle ? 1 : 0}_${Math.round(aspect * 100)}`;
     const cachedCard = this.cardNameCache.get(cacheKey);
     if (cachedCard && bytesEqual(cachedCard.fullBytes, fullBytes)) {
       return cachedCard.result;
@@ -2023,9 +2099,11 @@ export class ImageRecognizer {
     const hwList = [baseHw];
     const altHw = Math.round(cropH * 2.33);
     if (altHw <= cropW && altHw !== baseHw) hwList.push(altHw);
-    if (cropH <= 13) {
+    if (cropH <= 14) {
       const alt2 = Math.round(cropH * 2.2);
       if (alt2 <= cropW && !hwList.includes(alt2)) hwList.push(alt2);
+      const alt3 = Math.round(cropH * 2.08);
+      if (alt3 <= cropW && !hwList.includes(alt3)) hwList.push(alt3);
     }
 
     const headVariants: Uint8Array[] = [];
@@ -2063,9 +2141,11 @@ export class ImageRecognizer {
     const twList = [baseTw];
     const altTw = Math.round(cropH * 2.33);
     if (altTw <= cropW && altTw !== baseTw) twList.push(altTw);
-    if (cropH <= 13) {
+    if (cropH <= 14) {
       const alt2 = Math.round(cropH * 2.2);
       if (alt2 <= cropW && !twList.includes(alt2)) twList.push(alt2);
+      const alt3 = Math.round(cropH * 2.08);
+      if (alt3 <= cropW && !twList.includes(alt3)) twList.push(alt3);
     }
 
     const tailVariants: Uint8Array[] = [];
@@ -2169,7 +2249,7 @@ export class ImageRecognizer {
       }
 
       // 状態に応じて同名固有ペア(272組)の片方をスキップし、重複計算の削減と継承(180pt)/本体(340pt)の厳密分離を両立する
-      if (cardState === 'acquired') {
+      if (cardState === 'acquired' && isRainbowCard) {
         if (s.rarity <= 2 && s.id >= 900000 && s.id < 1000000) {
           continue;
         }
@@ -2744,20 +2824,23 @@ export class ImageRecognizer {
         spResult.needSp,
         isUnselected,
         isGoldCard,
-        spResult.state
+        spResult.state,
+        isRainbowUnique
       );
       if (skillId <= 0) {
         continue;
       }
 
       // 獲得済枠の厳密ガード:
-      // スキル獲得画面で最初から獲得済なのは育成ウマ娘自身の固有スキル (rarity >= 3) のみ。
-      // 通常スキル (rarity <= 2) で緑Ptもピンクも無い枠は 100% ハルシネーションなので棄却！
+      // 緑Ptもピンク「獲得済」バッジも無い枠での獲得済誤判定(通常スキル)は棄却する。
+      // 一方、購入決定後のピンク「獲得済」バッジ付き白/金/継承スキルは有効カードとして通す。
       if (spResult.state === 'acquired') {
-        if (rarity < 3 || dist > 260) {
+        if ((rarity < 3 && !spResult.isPinkAcquired) || dist > 260) {
           continue;
         }
       }
+
+      const canEvolve = rarity <= 2 ? this.hasEvolutionBadge(img, cLeft, cw, box.top, ch) : false;
 
       cards.push({
         skillId,
@@ -2766,6 +2849,7 @@ export class ImageRecognizer {
         state: spResult.state,
         dist,
         box,
+        canEvolve,
       });
     }
 

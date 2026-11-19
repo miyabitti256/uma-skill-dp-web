@@ -100,10 +100,10 @@ function calculateEffectiveGradeValue(
 }
 
 interface EvoOptionDetail {
-  slotType: 'chara_lv3' | 'chara_lv5' | 'scenario';
+  slotType: 'chara_lv3' | 'chara_lv5' | 'scenario' | 'succession';
   evolvedSkill: SkillMasterItem;
   evoEff: number;
-  baseGoldEff: number;
+  baseEff: number;
   evoDelta: number;
 }
 
@@ -273,29 +273,43 @@ export class TypeScriptSkillSolver implements ISkillSolver {
         });
       };
 
-      if (isLocked || baseGain > 0) {
-        pushOption(baseGain, 0, 0, 0);
-      }
+      const successionEvoDetail =
+        skill.rarity === 1 && skill.canEvolve
+          ? this.collectSuccessionEvolutionDetail(skill.id, effGrade, selectedCardId, aptitudes)
+          : undefined;
 
-      if (skill.rarity === 2) {
-        const evoDetails = this.collectGoldEvolutionDetails(
-          skill.id,
-          effGrade,
-          selectedCardId,
-          selectedScenarioId,
-          maxScen,
-          aptitudes
-        );
-        for (const evoDetail of evoDetails) {
-          const evoGain = Math.max(0, evoDetail.evoEff - baseGroupEff);
-          if (evoGain > baseGain || (isLocked && evoGain > 0)) {
-            pushOption(
-              evoGain,
-              evoDetail.slotType === 'chara_lv3' ? 1 : 0,
-              evoDetail.slotType === 'chara_lv5' ? 1 : 0,
-              evoDetail.slotType === 'scenario' ? 1 : 0,
-              evoDetail
-            );
+      if (successionEvoDetail) {
+        const evoGain = Math.max(0, successionEvoDetail.evoEff - baseGroupEff);
+        if (evoGain > baseGain || (isLocked && evoGain > 0)) {
+          pushOption(evoGain, 0, 0, 0, successionEvoDetail);
+        } else if (isLocked || baseGain > 0) {
+          pushOption(baseGain, 0, 0, 0);
+        }
+      } else {
+        if (isLocked || baseGain > 0) {
+          pushOption(baseGain, 0, 0, 0);
+        }
+
+        if (skill.rarity === 2) {
+          const evoDetails = this.collectGoldEvolutionDetails(
+            skill.id,
+            effGrade,
+            selectedCardId,
+            selectedScenarioId,
+            maxScen,
+            aptitudes
+          );
+          for (const evoDetail of evoDetails) {
+            const evoGain = Math.max(0, evoDetail.evoEff - baseGroupEff);
+            if (evoGain > baseGain || (isLocked && evoGain > 0)) {
+              pushOption(
+                evoGain,
+                evoDetail.slotType === 'chara_lv3' ? 1 : 0,
+                evoDetail.slotType === 'chara_lv5' ? 1 : 0,
+                evoDetail.slotType === 'scenario' ? 1 : 0,
+                evoDetail
+              );
+            }
           }
         }
       }
@@ -338,9 +352,42 @@ export class TypeScriptSkillSolver implements ISkillSolver {
       }
     }
 
-    // 既取得・選択中の金スキルも進化枠の競合・最適化に参加させる（SP消費 0、進化増分のみ評価）
+    // 既取得・選択中の金スキルおよび継承進化スキルも進化枠・評価点増分の最適化に参加させる（SP消費 0）
     for (const [groupId, entry] of acquiredOrSelectedByGroup) {
-      if (lockedByGroup.has(groupId) || entry.skill.rarity !== 2) continue;
+      if (lockedByGroup.has(groupId)) continue;
+
+      if (entry.skill.rarity === 1) {
+        if (!entry.skill.canEvolve) continue;
+        const succDetail = this.collectSuccessionEvolutionDetail(
+          entry.skill.id,
+          entry.effectiveGrade,
+          selectedCardId,
+          aptitudes
+        );
+        if (!succDetail) continue;
+
+        dpGroups.push({
+          canSkip: false,
+          isAcquiredGroup: true,
+          options: [
+            {
+              skill: entry.skill,
+              actualCost: 0,
+              dpCost: 0,
+              effectiveGrade: succDetail.evoDelta,
+              costPerformance: 999,
+              isLocked: false,
+              needC3: 0,
+              needC5: 0,
+              needSc: 0,
+              evoDetail: succDetail,
+            },
+          ],
+        });
+        continue;
+      }
+
+      if (entry.skill.rarity !== 2) continue;
       const evoDetails = this.collectGoldEvolutionDetails(
         entry.skill.id,
         entry.effectiveGrade,
@@ -609,6 +656,48 @@ export class TypeScriptSkillSolver implements ISkillSolver {
     return { evolvedSkill: bestEvo, evoEff: bestEvoEff, gain: bestGain };
   }
 
+  private collectSuccessionEvolutionDetail(
+    skillId: number,
+    baseEff: number,
+    cardId: number | undefined,
+    aptitudes: AptitudeState
+  ): EvoOptionDetail | undefined {
+    const succEvos = this.masterStore.successionEvolutionsByBaseSkillId.get(skillId);
+    if (!succEvos || succEvos.length === 0) return undefined;
+
+    let bestEvo: SkillMasterItem | undefined;
+    let bestEvoEff = 0;
+    let bestDelta = 0;
+
+    for (const evoItem of succEvos) {
+      if (cardId !== undefined && cardId > 0 && evoItem.cardId === cardId) continue;
+      const evolvedSkill = this.masterStore.skillsById.get(evoItem.evolvedSkillId);
+      if (!evolvedSkill) continue;
+
+      const evoEff = calculateEffectiveGradeValue(
+        evolvedSkill.gradeValue,
+        evolvedSkill.distanceTypes,
+        evolvedSkill.runningStyles,
+        aptitudes
+      );
+      const delta = evoEff - baseEff;
+      if (delta > bestDelta) {
+        bestDelta = delta;
+        bestEvoEff = evoEff;
+        bestEvo = evolvedSkill;
+      }
+    }
+
+    if (!bestEvo) return undefined;
+    return {
+      slotType: 'succession',
+      evolvedSkill: bestEvo,
+      evoEff: bestEvoEff,
+      baseEff,
+      evoDelta: bestDelta,
+    };
+  }
+
   private collectGoldEvolutionDetails(
     skillId: number,
     goldEff: number,
@@ -631,7 +720,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
             slotType: rank === 3 ? 'chara_lv3' : 'chara_lv5',
             evolvedSkill: best.evolvedSkill,
             evoEff: best.evoEff,
-            baseGoldEff: goldEff,
+            baseEff: goldEff,
             evoDelta: best.gain,
           });
         }
@@ -656,7 +745,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
               slotType: 'scenario',
               evolvedSkill,
               evoEff,
-              baseGoldEff: goldEff,
+              baseEff: goldEff,
               evoDelta: gain,
             });
           }
@@ -668,7 +757,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
   }
 
   /**
-   * DP で最適割当された自前進化（覚醒Lv3, Lv5）およびシナリオ進化の推奨ガイドを生成
+   * DP で最適割当された自前進化（覚醒Lv3, Lv5）、シナリオ進化、および継承進化の推奨ガイドを生成
    */
   private generateEvolutionRecommendations(
     acquiredOrRecommendedIds: Set<number>,
@@ -764,6 +853,26 @@ export class TypeScriptSkillSolver implements ISkillSolver {
           recommendationNote: `「${evolvedSkill.name}」へ無料進化推奨 (+${evoDelta} pt)`,
         });
       }
+    }
+
+    // 3. 継承進化（DP で割当された継承進化スキル）
+    for (const baseSkillId of this.masterStore.successionEvolutionsByBaseSkillId.keys()) {
+      const assigned = dpEvolutionAssignments.get(baseSkillId);
+      if (!assigned || assigned.evoDetail.slotType !== 'succession') continue;
+
+      const baseSkill = this.masterStore.skillsById.get(baseSkillId);
+      const baseName = baseSkill ? baseSkill.name : `スキル #${baseSkillId}`;
+      const { evolvedSkill, evoDelta } = assigned.evoDetail;
+
+      results.push({
+        slotType: 'succession',
+        slotName: '継承進化',
+        baseSkillName: baseName,
+        baseSkillId,
+        evolvedSkill,
+        canEvolve: true,
+        recommendationNote: `「${evolvedSkill.name}」へ継承進化 (+${evoDelta} pt)`,
+      });
     }
 
     return results;

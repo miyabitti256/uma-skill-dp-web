@@ -1428,3 +1428,234 @@ describe('mergeRecognizedSkills (Same-Millisecond Update & Empty Array Reflectio
     assert.equal(mergeRecognizedSkills(alreadyEmpty, []), alreadyEmpty);
   });
 });
+
+// 18. 継承進化スキル (Succession Skill Evolutions) テスト
+describe('Succession Skill Evolutions (継承進化スキル)', () => {
+  const masterData = JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'));
+  const masterStore = new MasterStore(masterData);
+  const defaultAptitudes = {
+    turf: 'A',
+    dirt: 'G',
+    short: 'A',
+    mile: 'A',
+    middle: 'A',
+    long: 'A',
+    nige: 'A',
+    senkou: 'A',
+    sashi: 'A',
+    oikomi: 'A',
+  };
+
+  function makeDetectedSkill(skillId, overrides = {}) {
+    const m = masterStore.skillsById.get(skillId);
+    assert.ok(m, `Master skill ${skillId} must exist`);
+    return {
+      id: m.id,
+      name: m.name,
+      recognizedCost: overrides.recognizedCost ?? m.needSkillPoint,
+      baseCost: m.needSkillPoint,
+      gradeValue: m.gradeValue,
+      rarity: m.rarity,
+      groupId: m.groupId,
+      groupRate: m.groupRate,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve: false,
+      lastSeenTimestamp: 0,
+      ...overrides,
+    };
+  }
+
+  test('MasterStore.isSkillEvolvable recognizes succession evolution skills for other trainees and rejects source card or missing badge', () => {
+    // ステイゴールド継承固有: 黄金を訪ねて (901351 -> 91101351)
+    assert.equal(masterStore.isSkillEvolvable(901351), true, 'Succession skill must be evolvable without trainee selected');
+    assert.equal(masterStore.isSkillEvolvable(901351, 100101), true, 'Succession skill must be evolvable for another trainee');
+    assert.equal(masterStore.isSkillEvolvable(901351, 100101, undefined, false), false, 'Succession skill without evo badge must not be evolvable');
+    assert.equal(masterStore.isSkillEvolvable(901351, 113501), false, 'Source card itself cannot inherit/evolve its own unique');
+
+    // エピファネイア・ラインクラフトの継承進化も同様に判定される
+    assert.equal(masterStore.isSkillEvolvable(901411, 100101), true);
+    assert.equal(masterStore.isSkillEvolvable(901411, 100101, undefined, false), false);
+    assert.equal(masterStore.isSkillEvolvable(911091, 100101), true);
+
+    // 通常の白スキル・通常の継承固有 (シューティングスター 900011) は対象外
+    assert.equal(masterStore.isSkillEvolvable(20011, 100101), false);
+    assert.equal(masterStore.isSkillEvolvable(900011, 100101), false);
+  });
+
+  test('TypeScriptSkillSolver evaluates Stay Gold succession evolution (180 -> 240 pt) only when canEvolve is true', () => {
+    const solver = new TypeScriptSkillSolver(masterStore);
+    const stayGoldInherited = makeDetectedSkill(901351, { recognizedCost: 200, canEvolve: true });
+    const stayGoldNoBadge = makeDetectedSkill(901351, { recognizedCost: 200, canEvolve: false });
+    const rivalWhite = {
+      id: 990101,
+      name: 'テスト比較用白スキル',
+      recognizedCost: 200,
+      baseCost: 200,
+      gradeValue: 210,
+      rarity: 1,
+      groupId: 990101,
+      groupRate: 1,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve: false,
+      lastSeenTimestamp: 0,
+    };
+
+    // 1. 候補状態 (進化可能ラベルあり): 継承進化(240pt)評価により 210pt スキルに勝利する
+    const resCandidate = solver.solve([stayGoldInherited, rivalWhite], {
+      availableSp: 200,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.deepEqual(resCandidate.recommendedSkills.map((r) => r.skill.id), [901351]);
+    assert.equal(resCandidate.recommendedSkills[0].effectiveGrade, 240);
+    assert.equal(resCandidate.recommendedSkills[0].costPerformance, 1.2);
+    assert.equal(resCandidate.totalAdditionalGrade, 240);
+    assert.equal(resCandidate.maxGradeValue, 240);
+    const succRec = resCandidate.evolutionRecommendations.find((e) => e.slotType === 'succession');
+    assert.ok(succRec && succRec.canEvolve && succRec.baseSkillId === 901351);
+    assert.equal(succRec.evolvedSkill?.id, 91101351);
+    assert.equal(succRec.evolvedSkill?.gradeValue, 240);
+
+    // 1b. 候補状態 (進化可能ラベルなし): 180pt 扱いのままなので 210pt スキルが選ばれる
+    const resNoBadge = solver.solve([stayGoldNoBadge, rivalWhite], {
+      availableSp: 200,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.deepEqual(resNoBadge.recommendedSkills.map((r) => r.skill.id), [990101]);
+    assert.equal(resNoBadge.maxGradeValue, 210);
+    assert.equal(resNoBadge.evolutionRecommendations.some((e) => e.slotType === 'succession'), false);
+
+    // 2. 選択中 / 獲得済み状態 (進化可能ラベルあり: SP 0 でも +60pt の進化増分を加算、ラベルなし: 180pt)
+    for (const state of ['selected', 'acquired']) {
+      const owned = makeDetectedSkill(901351, { recognizedCost: 0, state, canEvolve: true });
+      const resOwned = solver.solve([owned], {
+        availableSp: 0,
+        aptitudes: defaultAptitudes,
+        selectedCardId: 100101,
+        lockedSkillIds: [],
+        excludedSkillIds: [],
+      });
+      assert.deepEqual(resOwned.recommendedSkills, []);
+      assert.equal(resOwned.spentSp, 0);
+      assert.equal(resOwned.totalAdditionalGrade, 60, `Must add +60pt evolution bonus for ${state} state`);
+      assert.equal(resOwned.maxGradeValue, 240, `Max grade must be 240pt for ${state} state`);
+      const ownedRec = resOwned.evolutionRecommendations.find((e) => e.slotType === 'succession');
+      assert.ok(ownedRec && ownedRec.canEvolve && ownedRec.evolvedSkill?.id === 91101351);
+
+      const ownedNoBadge = makeDetectedSkill(901351, { recognizedCost: 0, state, canEvolve: false });
+      const resOwnedNoBadge = solver.solve([ownedNoBadge], {
+        availableSp: 0,
+        aptitudes: defaultAptitudes,
+        selectedCardId: 100101,
+        lockedSkillIds: [],
+        excludedSkillIds: [],
+      });
+      assert.equal(resOwnedNoBadge.totalAdditionalGrade, 0);
+      assert.equal(resOwnedNoBadge.maxGradeValue, 180);
+    }
+
+    // 3. 本人カード (113501) 指定時はラベルフラグに関わらず進化しない (180pt 扱い)
+    const resSelf = solver.solve([stayGoldInherited], {
+      availableSp: 200,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 113501,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resSelf.maxGradeValue, 180);
+    assert.equal(resSelf.evolutionRecommendations.some((e) => e.slotType === 'succession'), false);
+  });
+
+  test('Succession evolutions coexist with chara Lv5 and 2 scenario evolutions without consuming evolution slots', () => {
+    const solver = new TypeScriptSkillSolver(masterStore);
+    const zenshin = makeDetectedSkill(200511, { recognizedCost: 170 }); // chara Lv5: 508 -> 633
+    const kikotsu = makeDetectedSkill(202751, { recognizedCost: 180 }); // scenario: 559 -> 696
+    const moyuru = makeDetectedSkill(204051, { recognizedCost: 180 }); // scenario: 559 -> 696
+    const stayGold = makeDetectedSkill(901351, { recognizedCost: 200, canEvolve: true }); // succession: 180 -> 240
+    const rheinKraft = makeDetectedSkill(911091, { recognizedCost: 200, canEvolve: true }); // succession: 180 -> 240
+
+    const res = solver.solve([zenshin, kikotsu, moyuru, stayGold, rheinKraft], {
+      availableSp: 930,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      selectedScenarioId: 15,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+
+    assert.equal(res.recommendedSkills.length, 5);
+    assert.equal(res.totalAdditionalGrade, 633 + 696 + 696 + 240 + 240);
+    assert.equal(res.maxGradeValue, 2505);
+    assert.equal(res.evolutionRecommendations.filter((e) => e.canEvolve).length, 5);
+    assert.deepEqual(
+      res.evolutionRecommendations
+        .filter((e) => e.slotType === 'succession' && e.canEvolve)
+        .map((e) => e.baseSkillId)
+        .sort((a, b) => a - b),
+      [901351, 911091]
+    );
+  });
+
+  test('RecognitionAggregator deduplicates same-name innate/inherited uniques and propagates canEvolve updates through mergeRecognizedSkills', () => {
+    const agg = new RecognitionAggregator(masterStore);
+    const frame = agg.processOutput(
+      {
+        screenType: 'スキル獲得通常表示',
+        screenMode: 'normal',
+        skillPoint: 8671,
+        skillPointValid: true,
+        cards: [
+          {
+            skillId: 101351,
+            name: '黄金を訪ねて',
+            needSp: 0,
+            state: 'acquired',
+            dist: 150,
+            box: { top: 336, bottom: 451, height: 115 },
+            canEvolve: false,
+          },
+          {
+            skillId: 901351,
+            name: '黄金を訪ねて',
+            needSp: 180,
+            state: 'unselected',
+            dist: 150,
+            box: { top: 461, bottom: 576, height: 115 },
+            canEvolve: true,
+          },
+          {
+            skillId: 901411,
+            name: '光れ！弾けろ！超新星爆発！',
+            needSp: 120,
+            state: 'unselected',
+            dist: 154,
+            box: { top: 587, bottom: 702, height: 115 },
+            canEvolve: false,
+          },
+        ],
+      },
+      true
+    );
+    assert.equal(frame.detectedSkills.some((s) => s.id === 901351), false, 'Innate 101351 must exclude same-name inheritable 901351');
+    const innate = frame.detectedSkills.find((s) => s.id === 101351);
+    assert.equal(innate?.gradeValue, 340);
+    assert.equal(innate?.canEvolve, false);
+    const epipha = frame.detectedSkills.find((s) => s.id === 901411);
+    assert.equal(epipha?.canEvolve, false, 'Must propagate canEvolve=false when badge is absent');
+
+    const prev = [makeDetectedSkill(901351, { canEvolve: false, lastSeenTimestamp: 1000 })];
+    const next = [makeDetectedSkill(901351, { canEvolve: true, lastSeenTimestamp: 1000 })];
+    const merged = mergeRecognizedSkills(prev, next);
+    assert.notEqual(merged, prev);
+    assert.equal(merged[0].canEvolve, true, 'mergeRecognizedSkills must reflect canEvolve update');
+  });
+});

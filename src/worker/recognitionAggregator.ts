@@ -356,7 +356,7 @@ export class RecognitionAggregator {
           }
         }
 
-        const canEvolve = false;
+        const canEvolve = Boolean(card.canEvolve || existing?.canEvolve);
         const nextMeta = existingMeta ? { ...existingMeta, synthetic: false } : { synthetic: false };
         this.skillMeta.set(card.skillId, nextMeta);
 
