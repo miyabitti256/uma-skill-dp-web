@@ -15,6 +15,44 @@ interface WindowValidationResult {
   errorMessage?: string;
 }
 
+// Why these thresholds: 実測スイープで認識が安定し始める境界 (縦 355x631〜376x697, 横 943x530〜960x540) に対して
+// 小数pxマージンを確保し、カードID・スキル名・所持SPの文字潰れによる取りこぼしを防ぐ推奨最小サイズを定める
+export const RECOMMENDED_MIN_RESOLUTION = {
+  portrait: { width: 380, height: 670 },
+  landscape: { width: 1000, height: 560 },
+} as const;
+
+export interface CaptureResolutionCheck {
+  isLowResolution: boolean;
+  width: number;
+  height: number;
+  recommendedWidth: number;
+  recommendedHeight: number;
+}
+
+export function checkCaptureResolution(width: number, height: number): CaptureResolutionCheck {
+  if (width <= 0 || height <= 0) {
+    return {
+      isLowResolution: false,
+      width,
+      height,
+      recommendedWidth: 0,
+      recommendedHeight: 0,
+    };
+  }
+  const isLandscape = width > height;
+  const rec = isLandscape
+    ? RECOMMENDED_MIN_RESOLUTION.landscape
+    : RECOMMENDED_MIN_RESOLUTION.portrait;
+  return {
+    isLowResolution: width < rec.width || height < rec.height,
+    width,
+    height,
+    recommendedWidth: rec.width,
+    recommendedHeight: rec.height,
+  };
+}
+
 /**
  * 共有対象のウィンドウ・画面のバリデーション
  * @param label MediaStreamTrack.label

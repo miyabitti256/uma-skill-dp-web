@@ -8,7 +8,7 @@ import { ImageRecognizer } from '../src/worker/imageRecognizer.ts';
 import { RecognitionAggregator } from '../src/worker/recognitionAggregator.ts';
 import { mergeRecognizedSkills } from '../src/worker/skillMerge.ts';
 import { RecognitionWorkerPool, determineWorkerPoolSize } from '../src/worker/recognitionWorkerPool.ts';
-import { CaptureManager } from '../src/capture/captureManager.ts';
+import { CaptureManager, checkCaptureResolution } from '../src/capture/captureManager.ts';
 import { TypeScriptSkillSolver } from '../src/solver/skillSolver.ts';
 import { MasterStore } from '../src/data/masterStore.ts';
 
@@ -1657,5 +1657,40 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
     const merged = mergeRecognizedSkills(prev, next);
     assert.notEqual(merged, prev);
     assert.equal(merged[0].canEvolve, true, 'mergeRecognizedSkills must reflect canEvolve update');
+  });
+});
+
+describe('Capture Resolution Warning Check (checkCaptureResolution)', () => {
+  test('flags low-resolution portrait and landscape sizes while accepting recommended minimum and 0x0', () => {
+    // What: Verifies portrait (>=380x670) and landscape (>=1000x560) thresholds against boundary sizes,
+    // all Issue #5 resolutions (252x448, 355x631, 376x697, 395x702, 943x530, 1191x670), and 0x0.
+    const zero = checkCaptureResolution(0, 0);
+    assert.equal(zero.isLowResolution, false);
+    assert.equal(zero.recommendedWidth, 0);
+    assert.equal(zero.recommendedHeight, 0);
+
+    // 縦画面境界 (推奨: 380x670)
+    assert.equal(checkCaptureResolution(379, 670).isLowResolution, true, '379x670 width below 380');
+    assert.equal(checkCaptureResolution(380, 669).isLowResolution, true, '380x669 height below 670');
+    const portraitOk = checkCaptureResolution(380, 670);
+    assert.equal(portraitOk.isLowResolution, false, '380x670 meets portrait minimum');
+    assert.equal(portraitOk.recommendedWidth, 380);
+    assert.equal(portraitOk.recommendedHeight, 670);
+
+    // 横画面境界 (推奨: 1000x560)
+    assert.equal(checkCaptureResolution(999, 560).isLowResolution, true, '999x560 width below 1000');
+    assert.equal(checkCaptureResolution(1000, 559).isLowResolution, true, '1000x559 height below 560');
+    const landscapeOk = checkCaptureResolution(1000, 560);
+    assert.equal(landscapeOk.isLowResolution, false, '1000x560 meets landscape minimum');
+    assert.equal(landscapeOk.recommendedWidth, 1000);
+    assert.equal(landscapeOk.recommendedHeight, 560);
+
+    // Issue #5 実測サイズ群
+    assert.equal(checkCaptureResolution(252, 448).isLowResolution, true, '252x448 portrait low-res');
+    assert.equal(checkCaptureResolution(355, 631).isLowResolution, true, '355x631 portrait low-res');
+    assert.equal(checkCaptureResolution(376, 697).isLowResolution, true, '376x697 portrait width < 380');
+    assert.equal(checkCaptureResolution(395, 702).isLowResolution, false, '395x702 portrait >= 380x670');
+    assert.equal(checkCaptureResolution(943, 530).isLowResolution, true, '943x530 landscape low-res');
+    assert.equal(checkCaptureResolution(1191, 670).isLowResolution, false, '1191x670 landscape >= 1000x560');
   });
 });

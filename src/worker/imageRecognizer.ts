@@ -510,6 +510,7 @@ export class ImageRecognizer {
       result: { skillId: number; name: string; rarity: number; dist: number };
     }
   >();
+  private shibaTmplCache = new Map<number, number[][]>();
 
   constructor(templates: TemplatesData) {
     const tInit0 = performance.now();
@@ -610,6 +611,35 @@ export class ImageRecognizer {
     return { skills: this.skillTable.length, cards: this.cardTable.length };
   }
 
+  private getShibaTemplate(sz: number): number[][] | null {
+    const cached = this.shibaTmplCache.get(sz);
+    if (cached) return cached;
+
+    for (const entry of Object.values(this.templates.anchors.shiba.sizes)) {
+      if (entry.width === sz && entry.height === sz) {
+        this.shibaTmplCache.set(sz, entry.pixels);
+        return entry.pixels;
+      }
+    }
+
+    const base = this.templates.anchors.shiba.sizes['16'];
+    if (!base) return null;
+    const flat = new Uint8Array(base.width * base.height);
+    for (let y = 0; y < base.height; y++) {
+      const row = base.pixels[y];
+      for (let x = 0; x < base.width; x++) {
+        flat[y * base.width + x] = row[x];
+      }
+    }
+    const resized = resizeArea(flat, base.width, base.height, sz, sz);
+    const out: number[][] = [];
+    for (let y = 0; y < sz; y++) {
+      out.push(Array.from(resized.subarray(y * sz, (y + 1) * sz)));
+    }
+    this.shibaTmplCache.set(sz, out);
+    return out;
+  }
+
   /**
    * 数字 OCR (トポロジー解析 + 16x20 正規化コサイン相関)
    */
@@ -632,6 +662,8 @@ export class ImageRecognizer {
     // 穴の検出
     const ccs = connectedComponentsWithStats(invPad, padW, padH);
     const holes: ConnectedComponent[] = [];
+    // Why not fixed >= 3: 252x448〜355x631 等の低解像度ホーム画面では '8' (6x9px) の上穴が 2px に縮小し、area>=3 で除外されて '6' に誤分類されるため
+    const minHoleArea = pH <= 11 ? 2 : 3;
 
     for (const c of ccs) {
       if (
@@ -639,7 +671,7 @@ export class ImageRecognizer {
         c.top > 0 &&
         c.left + c.width < padW &&
         c.top + c.height < padH &&
-        c.area >= 3
+        c.area >= minHoleArea
       ) {
         holes.push(c);
       }
@@ -660,7 +692,8 @@ export class ImageRecognizer {
       } else if (cy < 0.4) {
         candidates = ['9', '4'];
       } else if (cy > 0.55) {
-        candidates = ['6'];
+        // Why '8' at pH <= 11: 低解像度では上穴が 1px 以下に完全に潰れる場合があるため、16x20 コサイン相関で '6'/'8' を比較する
+        candidates = pH <= 11 ? ['6', '8'] : ['6'];
       } else {
         candidates = ['4', '6', '9'];
       }
@@ -749,9 +782,11 @@ export class ImageRecognizer {
     }
 
     let orangePixels = 0;
+    let orangeSamples = 0;
     for (let y = btnY0; y < btnY1; y += 2) {
       const rowOffset = y * w;
       for (let x = btnX0; x < btnX1; x += 2) {
+        orangeSamples++;
         const idx = (rowOffset + x) * 4;
         const r = data[idx];
         const g = data[idx + 1];
@@ -762,7 +797,9 @@ export class ImageRecognizer {
       }
     }
 
-    if (orangePixels > 625) {
+    // Why ratio > 0.025 instead of > 625: 低解像度 (252x448 等) では走査サンプル数自体が 3,800 程度に減り固定閾値 625 を超えない。
+    // 実測でホーム画面最小は 3.92%、非ホーム画面最大は 0.98% のため面積比率 2.5% で解像度非依存に分離できる。
+    if (orangeSamples > 0 && orangePixels / orangeSamples > 0.025) {
       return {
         screenType: '育成完了確認（ホーム画面）',
         screenMode: 'idle',
@@ -821,80 +858,77 @@ export class ImageRecognizer {
     // 3. ウマ娘詳細ポップアップ判定（芝アンカー）
     let idealExpX: number;
     let idealExpY: number;
-    let fsize: number;
+    let targetFs: number;
+    let roiRadius: number;
 
     if (w > h) {
       // 横画面
       const scale = (h - titlebarOffsetY) / 1080.0;
       idealExpX = Math.round(412 * scale);
       idealExpY = Math.round(346 * scale);
-      if (w === 1920 && (h === 1080 || h === 1080 + titlebarOffsetY)) {
-        fsize = 16;
-      } else {
-        const targetFs = 16 * scale;
-        const availableFs = [10, 11, 12, 14, 16, 20, 24, 28, 32];
-        fsize = availableFs.reduce((prev, curr) =>
-          Math.abs(curr - targetFs) < Math.abs(prev - targetFs) ? curr : prev
-        );
-      }
+      targetFs = 16 * scale;
+      roiRadius = Math.max(15, Math.min(45, Math.round(45 * scale)));
     } else {
       // 縦画面
       const scaleW = w / 561.0;
       const scaleH = (h - titlebarOffsetY) / 997.0;
       idealExpX = Math.round(150 * scaleW);
       idealExpY = Math.round(319 * scaleH);
-      const targetFs = 28.0 * (w / 1080.0);
-      const availableFs = [10, 11, 12, 14, 16, 20, 24, 28, 32];
-      fsize = availableFs.reduce((prev, curr) =>
-        Math.abs(curr - targetFs) < Math.abs(prev - targetFs) ? curr : prev
-      );
+      targetFs = 28.0 * (w / 1080.0);
+      roiRadius = Math.max(15, Math.min(45, Math.round(45 * scaleW)));
     }
 
     const expX = idealExpX;
     const expY = idealExpY + titlebarOffsetY;
 
-    const roiY0 = Math.max(0, expY - 45);
-    const roiY1 = Math.min(h, expY + 45);
-    const roiX0 = Math.max(0, expX - 45);
-    const roiX1 = Math.min(w, expX + 45);
+    // Why scale-proportional roiRadius: 固定 45px だと低解像度で「バ場適性」ラベルや上枠線まで ROI に入り誤吸着するため
+    const roiY0 = Math.max(0, expY - roiRadius);
+    const roiY1 = Math.min(h, expY + roiRadius);
+    const roiX0 = Math.max(0, expX - roiRadius);
+    const roiX1 = Math.min(w, expX + roiRadius);
     const roiW = roiX1 - roiX0;
     const roiH = roiY1 - roiY0;
 
-    const shibaData =
-      this.templates.anchors.shiba.sizes[fsize.toString()] ||
-      this.templates.anchors.shiba.sizes['16'];
+    const baseShiba = this.templates.anchors.shiba.sizes['16'];
+    if (baseShiba) {
+      // Why dynamic sizing from 14x14 base + invGray: 最小テンプレート fsize=10 (9x9) 未満の低解像度 (7x7/8x8) や
+      // リサンプリング位相による 9x9/8x8 ズレ・120.5二値化欠損を防ぐため、反転輝度と近傍サイズ候補で照合する
+      const nomSz = Math.max(6, Math.ceil((baseShiba.width * targetFs) / 16.0 - 0.5));
+      const szCandidates = nomSz <= 11 ? [nomSz, Math.max(6, nomSz - 1), nomSz + 1] : [nomSz];
 
-    if (shibaData && roiW >= shibaData.width && roiH >= shibaData.height) {
-      // ROI内のみインライン二値化
-      const roiSlice = new Uint8Array(roiW * roiH);
+      const roiInvGray = new Uint8Array(roiW * roiH);
       let darkCount = 0;
+      let minInv = 255;
+      let maxInv = 0;
       for (let y = 0; y < roiH; y++) {
         const rowOffset = (roiY0 + y) * w;
         for (let x = 0; x < roiW; x++) {
           const idx = (rowOffset + (roiX0 + x)) * 4;
-          const r = data[idx];
-          const g = data[idx + 1];
-          const b = data[idx + 2];
-          if (0.299 * r + 0.587 * g + 0.114 * b <= 120.5) {
-            roiSlice[y * roiW + x] = 255;
-            darkCount++;
-          }
+          const luma = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+          const inv = Math.max(0, Math.min(255, Math.round(255 - luma)));
+          roiInvGray[y * roiW + x] = inv;
+          if (inv >= 105) darkCount++;
+          if (inv < minInv) minInv = inv;
+          if (inv > maxInv) maxInv = inv;
         }
       }
 
-      if (darkCount >= 10) {
-        const match = matchTemplateNormed(
-          roiSlice,
-          roiW,
-          roiH,
-          shibaData.pixels,
-          shibaData.width,
-          shibaData.height
-        );
+      if (darkCount >= 10 && maxInv - minInv >= 40) {
+        let bestMatch: MatchResult = { score: 0, bestX: 0, bestY: 0 };
+        for (const sz of szCandidates) {
+          if (roiW < sz || roiH < sz) continue;
+          const tmpl = this.getShibaTemplate(sz);
+          if (!tmpl) continue;
+          const match = matchTemplateNormed(roiInvGray, roiW, roiH, tmpl, sz, sz);
+          if (match.score > bestMatch.score) {
+            bestMatch = match;
+          }
+          if (bestMatch.score >= 0.72) break;
+        }
 
-        if (match.score >= 0.60) {
-          const actualAnchorX = roiX0 + match.bestX;
-          const actualAnchorY = roiY0 + match.bestY;
+        if (bestMatch.score >= 0.62) {
+          const actualAnchorX = roiX0 + bestMatch.bestX;
+          const actualAnchorY = roiY0 + bestMatch.bestY;
           const anchorDx = actualAnchorX - idealExpX;
           const anchorDy = actualAnchorY - idealExpY;
           return {
@@ -1133,110 +1167,83 @@ export class ImageRecognizer {
     const nameH = nameY1 - nameY0;
     if (nameW <= 20 || nameH <= 5) return undefined;
 
-    // 二値化 & 連結成分抽出 (name)
-    const nameBin = new Uint8Array(nameW * nameH);
-    for (let y = 0; y < nameH; y++) {
-      const rowOffset = (nameY0 + y) * w;
-      for (let x = 0; x < nameW; x++) {
-        const idx = (rowOffset + (nameX0 + x)) * 4;
-        const g = Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
-        nameBin[y * nameW + x] = g < 110 ? 255 : 0;
-      }
-    }
-
-    const ccsN = connectedComponentsWithStats(nameBin, nameW, nameH);
-    const validN = ccsN.filter((c) => c.area >= 15 && c.height >= 8 && c.width < 50);
-    if (validN.length === 0) return undefined;
-
-    const minXN = Math.min(...validN.map((c) => c.left));
-    const maxXN = Math.max(...validN.map((c) => c.left + c.width));
-    const minYN = Math.min(...validN.map((c) => c.top));
-    const maxYN = Math.max(...validN.map((c) => c.top + c.height));
-    const cropNW = maxXN - minXN + 1;
-    const cropNH = maxYN - minYN + 1;
-    if (cropNW <= 10 || cropNH <= 5) return undefined;
-
-    const cropN = new Uint8Array(cropNW * cropNH);
-    for (let y = 0; y < cropNH; y++) {
-      for (let x = 0; x < cropNW; x++) {
-        cropN[y * cropNW + x] = nameBin[(minYN + y) * nameW + (minXN + x)];
-      }
-    }
-    const normN = resizeArea(cropN, cropNW, cropNH, 64, 16);
-    const realBytesN = new Uint8Array(128);
-    for (let i = 0; i < 1024; i++) {
-      if (normN[i] > 64) {
-        realBytesN[i >> 3] |= 1 << (7 - (i & 7));
-      }
-    }
-
-    // 二値化 & 連結成分抽出 (title)
-    const titleW = nameW;
-    const titleH = titleY1 - titleY0;
-    let realBytesT: Uint8Array | null = null;
-    if (titleH > 5) {
-      const titleBin = new Uint8Array(titleW * titleH);
-      for (let y = 0; y < titleH; y++) {
-        const rowOffset = (titleY0 + y) * w;
-        for (let x = 0; x < titleW; x++) {
+    const extractCardFeatureVariants = (y0: number, roiH: number, isTitle: boolean): Uint8Array[] | null => {
+      if (roiH <= 5) return null;
+      const bin = new Uint8Array(nameW * roiH);
+      for (let y = 0; y < roiH; y++) {
+        const rowOffset = (y0 + y) * w;
+        for (let x = 0; x < nameW; x++) {
           const idx = (rowOffset + (nameX0 + x)) * 4;
           const g = Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
-          titleBin[y * titleW + x] = g < 110 ? 255 : 0;
+          // Why < 130 instead of < 110: 低解像度アンチエイリアスで「シ」「ン」「リ」等の細線が薄くなり欠落するのを防ぐ
+          bin[y * nameW + x] = g < 130 ? 255 : 0;
         }
       }
-      const ccsT = connectedComponentsWithStats(titleBin, titleW, titleH);
-      const validT = ccsT.filter((c) => c.area >= 10 && c.height >= 7 && c.width < 50);
-      if (validT.length > 0) {
-        const minXT = Math.min(...validT.map((c) => c.left));
-        const maxXT = Math.max(...validT.map((c) => c.left + c.width));
-        const minYT = Math.min(...validT.map((c) => c.top));
-        const maxYT = Math.max(...validT.map((c) => c.top + c.height));
-        const cropTW = maxXT - minXT + 1;
-        const cropTH = maxYT - minYT + 1;
-        if (cropTW > 10 && cropTH > 5) {
-          const cropT = new Uint8Array(cropTW * cropTH);
-          for (let y = 0; y < cropTH; y++) {
-            for (let x = 0; x < cropTW; x++) {
-              cropT[y * cropTW + x] = titleBin[(minYT + y) * titleW + (minXT + x)];
-            }
-          }
-          const normT = resizeArea(cropT, cropTW, cropTH, 64, 16);
-          realBytesT = new Uint8Array(128);
-          for (let i = 0; i < 1024; i++) {
-            if (normT[i] > 64) {
-              realBytesT[i >> 3] |= 1 << (7 - (i & 7));
-            }
-          }
+
+      const ccs = connectedComponentsWithStats(bin, nameW, roiH);
+      // Why relative thresholds: 固定 (area>=15, height>=8) では低解像度時の「シ」「ン」「リ」「ル」等が脱落し、
+      // 残り文字だけが 64x16 に引き伸ばされて別ウマ娘 (ヴィルシーナ等) に誤認識されるため
+      const minArea = isTitle ? Math.max(3, Math.round(roiH * 0.20)) : Math.max(4, Math.round(roiH * 0.25));
+      const minH = isTitle ? Math.max(3, Math.round(roiH * 0.26)) : Math.max(4, Math.round(roiH * 0.30));
+      const maxW = Math.max(20, roiH * 2);
+      const valid = ccs.filter((c) => c.area >= minArea && c.height >= minH && c.width < maxW);
+      if (valid.length === 0) return null;
+
+      const minX = Math.min(...valid.map((c) => c.left));
+      const maxX = Math.max(...valid.map((c) => c.left + c.width));
+      const minY = Math.min(...valid.map((c) => c.top));
+      const maxY = Math.max(...valid.map((c) => c.top + c.height));
+      const cropW = maxX - minX + 1;
+      const cropH = maxY - minY + 1;
+      if (cropW <= 10 || cropH <= 4) return null;
+
+      const crop = new Uint8Array(cropW * cropH);
+      for (let y = 0; y < cropH; y++) {
+        for (let x = 0; x < cropW; x++) {
+          crop[y * cropW + x] = bin[(minY + y) * nameW + (minX + x)];
         }
       }
-    }
+      const norm = resizeArea(crop, cropW, cropH, 64, 16);
+      // Why 56 + ±1bit shifts: 低解像度時のストローク細り・水平位相ズレを吸収してテンプレートとの乖離を抑える
+      const b0 = packBits(norm, 56);
+      return [b0, shiftBits(b0, 8, 16, -1), shiftBits(b0, 8, 16, 1)];
+    };
+
+    const nameVariants = extractCardFeatureVariants(nameY0, nameH, false);
+    if (!nameVariants) return undefined;
+
+    const titleH = titleY1 - titleY0;
+    const titleVariants = extractCardFeatureVariants(titleY0, titleH, true);
 
     let bestCardId: number | undefined = undefined;
     let bestDist = 99999;
     let bestHamN = 99999;
 
     for (const c of this.cardTable) {
-      let hamN = 0;
-      for (let b = 0; b < 128; b++) {
-        let xor = realBytesN[b] ^ c.nameBytes[b];
-        while (xor > 0) {
-          hamN += xor & 1;
-          xor >>= 1;
+      let hamN = 99999;
+      for (let v = 0; v < nameVariants.length; v++) {
+        const nv = nameVariants[v];
+        let d = 0;
+        for (let b = 0; b < 128; b++) {
+          d += POPCNT8[nv[b] ^ c.nameBytes[b]];
         }
+        if (d < hamN) hamN = d;
       }
 
       let hamT = 0;
-      if (realBytesT) {
-        for (let b = 0; b < 128; b++) {
-          let xor = realBytesT[b] ^ c.titleBytes[b];
-          while (xor > 0) {
-            hamT += xor & 1;
-            xor >>= 1;
+      if (titleVariants) {
+        hamT = 99999;
+        for (let v = 0; v < titleVariants.length; v++) {
+          const tv = titleVariants[v];
+          let d = 0;
+          for (let b = 0; b < 128; b++) {
+            d += POPCNT8[tv[b] ^ c.titleBytes[b]];
           }
+          if (d < hamT) hamT = d;
         }
       }
 
-      const tot = hamN + (realBytesT ? hamT : hamN);
+      const tot = hamN + (titleVariants ? hamT : hamN);
       if (tot < bestDist) {
         bestDist = tot;
         bestHamN = hamN;
@@ -1350,10 +1357,14 @@ export class ImageRecognizer {
     }
 
     const ccs = connectedComponentsWithStats(binInv, roiW, roiH);
+    // Why min(..., Math.max(...)): 通常解像度 (roiH >= 23) では従来通り area>=10, height>=8 を維持し、
+    // 低解像度 (252x448 roiH=13, 943x530 roiH=19) のみ h=6..7, area=9 の数字を通す
+    const minSpArea = Math.min(10, Math.max(5, Math.round(roiH * 0.40)));
+    const minSpHeight = Math.min(8, Math.max(5, Math.round(roiH * 0.35)));
     const validCcs = ccs.filter(
       (c) =>
-        c.area >= 10 &&
-        c.height >= 8 &&
+        c.area >= minSpArea &&
+        c.height >= minSpHeight &&
         // Why not hardcoded 25px: portrait 1080x1920 digits like '8' and '4' reach 26px width (~0.76 * height)
         c.width <= Math.max(25, c.height) &&
         c.top >= 2 &&
@@ -2363,12 +2374,14 @@ export class ImageRecognizer {
 
         // Worst-Character Gate: 1文字でも大きく乖離している候補を弾く
         // Why not 76 for T1 on ◎: 圧縮フレームや暗い背景では二重丸◎(T1)のみビットが割れやすく、漢字部分が一致していても誤棄却されるため
+        // Why 88 for cw < 450: 355x631 等 (cw=323, cropH=9) の低解像度では量子化で 1文字セルが ~82bit 振れるため maxDist=285 と整合させる
         const bodyWorst =
           s.name.length >= 4 ? Math.max(optH0, optH1, optT0) : Math.max(optH0, optH1);
         const worstCharHam = Math.max(bodyWorst, optT1);
-        const tailLimit = s.name.endsWith('◎') ? 105 : 76;
+        const worstLimit = cw < 450 ? 88 : 76;
+        const tailLimit = s.name.endsWith('◎') ? 105 : worstLimit;
 
-        if (bodyWorst > 76 || optT1 > tailLimit) {
+        if (bodyWorst > worstLimit || optT1 > tailLimit) {
           continue;
         }
 

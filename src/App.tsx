@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { HeaderBar } from './components/HeaderBar.tsx';
 import { ConditionPanel } from './components/ConditionPanel.tsx';
 import { OptimizationPanel } from './components/OptimizationPanel.tsx';
@@ -8,7 +9,11 @@ import { UsageModal } from './components/UsageModal.tsx';
 import { BugReportModal } from './components/BugReportModal.tsx';
 
 import { MasterStore } from './data/masterStore.ts';
-import { CaptureManager, CaptureSourceType } from './capture/captureManager.ts';
+import {
+  CaptureManager,
+  CaptureSourceType,
+  checkCaptureResolution,
+} from './capture/captureManager.ts';
 import { SkillSolverAdapter } from './solver/solverAdapter.ts';
 import { RecognitionWorkerPool } from './worker/recognitionWorkerPool.ts';
 import { mergeRecognizedSkills } from './worker/skillMerge.ts';
@@ -74,6 +79,7 @@ function App() {
 
   // キャプチャ & パフォーマンス
   const [captureSource, setCaptureSource] = useState<CaptureSourceType>('idle');
+  const [captureSize, setCaptureSize] = useState<{ width: number; height: number } | null>(null);
   const [screenMode, setScreenMode] = useState<ScreenMode>('idle');
   const [fps, setFps] = useState(0);
   const [latencyMs, setLatencyMs] = useState(0);
@@ -102,6 +108,7 @@ function App() {
   const latencySumRef = useRef(0);
   const lastFpsCalcRef = useRef(0);
   const frameSeqRef = useRef(0);
+  const lastCaptureSizeRef = useRef<{ width: number; height: number } | null>(null);
   const lastDetectedSkillsRef = useRef<DetectedSkillItem[] | null>(null);
 
   // 1. 初期ロード (マスタデータ)
@@ -202,6 +209,15 @@ function App() {
 
     const capture = new CaptureManager({
       onFrameCaptured: (bitmap: ImageBitmap, timestamp: number) => {
+        // postMessage の transfer 前にサイズを取得し、解像度変化時のみ state を更新して 60fps 毎の不要な再レンダーを防ぐ
+        const w = bitmap.width;
+        const h = bitmap.height;
+        const prevSize = lastCaptureSizeRef.current;
+        if (!prevSize || prevSize.width !== w || prevSize.height !== h) {
+          const nextSize = { width: w, height: h };
+          lastCaptureSizeRef.current = nextSize;
+          setCaptureSize(nextSize);
+        }
         const frameMsg: MainToWorkerMessage = {
           type: 'frame',
           seq: ++frameSeqRef.current,
@@ -214,6 +230,8 @@ function App() {
       onSourceChanged: (source: CaptureSourceType) => {
         setCaptureSource(source);
         if (source === 'idle') {
+          lastCaptureSizeRef.current = null;
+          setCaptureSize(null);
           setScreenMode('idle');
           setFps(0);
           setLatencyMs(0);
@@ -390,6 +408,12 @@ function App() {
     setActiveModal(null);
   }, []);
 
+  const resolutionCheck = useMemo(
+    () => (captureSize ? checkCaptureResolution(captureSize.width, captureSize.height) : null),
+    [captureSize]
+  );
+
+  // 1. ヘッダー操作バー (タイトルなし)
   return (
     <div className="flex flex-col min-h-screen lg:h-screen text-[#5b4333]">
       {/* 1. ヘッダー操作バー (タイトルなし) */}
@@ -418,6 +442,15 @@ function App() {
           >
             閉じる
           </button>
+        </div>
+      )}
+
+      {captureSource !== 'idle' && resolutionCheck?.isLowResolution && (
+        <div className="bg-[#fffbeb] border-b border-[#fcd34d] px-3 py-1.5 text-xs text-[#92400e] flex items-center gap-2 font-bold">
+          <AlertTriangle className="w-4 h-4 shrink-0 text-[#d97706]" aria-hidden="true" />
+          <span>
+            {`ウィンドウが小さいため認識精度が低下する恐れがあります（現在: ${resolutionCheck.width}×${resolutionCheck.height}px / 推奨: ${resolutionCheck.recommendedWidth}×${resolutionCheck.recommendedHeight}px 以上）`}
+          </span>
         </div>
       )}
 
