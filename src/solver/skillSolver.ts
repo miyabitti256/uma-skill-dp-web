@@ -99,6 +99,21 @@ function calculateEffectiveGradeValue(
   return Math.round(gradeValue * rDist * rStyle);
 }
 
+/**
+ * 本体固有スキル（育成開始時から獲得済みで SP を消費しない、rarity 3..5）かどうか。
+ * 選択の余地がなく評価点が固定のため、到達想定スキル評価点の合計には含めない。
+ * - 継承固有（rarity 1 / 900000 台）と進化後スキル（rarity 6）は対象外。
+ * - マスタ未登録の検証用スキルは DetectedSkillItem 側の値で判定する。
+ */
+function isInnateUniqueSkill(
+  master: SkillMasterItem | undefined,
+  skill: DetectedSkillItem
+): boolean {
+  const rarity = master ? master.rarity : skill.rarity;
+  const needSkillPoint = master ? master.needSkillPoint : skill.baseCost;
+  return rarity >= 3 && rarity <= 5 && needSkillPoint === 0;
+}
+
 interface EvoOptionDetail {
   slotType: 'chara_lv3' | 'chara_lv5' | 'scenario' | 'succession';
   evolvedSkill: SkillMasterItem;
@@ -180,8 +195,13 @@ export class TypeScriptSkillSolver implements ISkillSolver {
       }
     }
 
+    // 到達想定スキル評価点（スキル分）の合計
+    // 本体固有スキルは育成開始時から獲得済みで選択の余地がないため合計には含めない
     let currentGradeSum = 0;
     for (const entry of acquiredOrSelectedByGroup.values()) {
+      if (isInnateUniqueSkill(this.masterStore.skillsById.get(entry.skill.id), entry.skill)) {
+        continue;
+      }
       currentGradeSum += entry.effectiveGrade;
     }
 

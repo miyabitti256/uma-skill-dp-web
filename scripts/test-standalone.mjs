@@ -1181,6 +1181,47 @@ describe('TypeScriptSkillSolver 12-State Evolution DP & Same-Group Exclusivity',
     assert.equal(resLockedGroup.spentSp, 250);
     assert.equal(resLockedGroup.maxGradeValue, 559);
   });
+
+  test('excludes body innate uniques (rarity 3..5 / SP 0) from 到達想定スキル評価点', () => {
+    // What: 本体固有スキルは育成開始時から獲得済みで選択の余地がなく、評価点が固定のため、
+    // 到達想定スキル評価点（スキル分の合計）には含めない。
+    // 継承固有（rarity 1 / 900000 台）と通常スキルは従来どおり計上する。
+    const solver = new TypeScriptSkillSolver(masterStore);
+    const innate = masterStore.skillsById.get(101351);
+    assert.ok(innate && innate.rarity === 5 && innate.needSkillPoint === 0, '101351 は本体固有（rarity 5 / SP 0）');
+
+    // 1. 本体固有（黄金を訪ねて 340pt）だけ → 合計 0
+    const innateOwned = makeDetectedSkill(101351, { recognizedCost: 0, state: 'acquired' });
+    const resInnateOnly = solver.solve([innateOwned], {
+      availableSp: 0,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resInnateOnly.maxGradeValue, 0, '本体固有ぶんは加算されない');
+    assert.equal(resInnateOnly.totalAdditionalGrade, 0);
+    assert.deepEqual(resInnateOnly.recommendedSkills, []);
+
+    // 2. 本体固有 + 通常スキル（右回り○ 129pt）→ 通常スキルの分だけ計上
+    const whiteOwned = makeDetectedSkill(200012, { recognizedCost: 0, state: 'acquired' });
+    const resMixed = solver.solve([innateOwned, whiteOwned], {
+      availableSp: 0,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resMixed.maxGradeValue, 129, '本体固有(340)は加算されず通常スキル(129)のみ');
+
+    // 3. 継承固有（シューティングスター 900011: rarity 1 / 180pt）は従来どおり計上
+    const inheritedOwned = makeDetectedSkill(900011, { recognizedCost: 0, state: 'acquired' });
+    const resInherited = solver.solve([inheritedOwned], {
+      availableSp: 0,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resInherited.maxGradeValue, 180, '継承固有は通常スキル扱いで計上される');
+  });
 });
 
 // 15. 残SP 0〜9 更新回帰テスト (from Public PR #4 contribution)
@@ -1959,7 +2000,7 @@ describe('Aptitude Conditions from master.mdb tag_id (PR #7 Root Fix)', () => {
     }
 
     // Body-text normal skills 204293 (○: 217 * 1.1 = 239) & 204292 (◎: 262 * 1.1 = 288, +49 delta)
-    // and innate unique 101351 (340 fixed)
+    // and innate unique 101351 (340pt but excluded from 到達想定スキル評価点)
     const res204293 = solver.solve([makeCandidate(204293, 100, false)], {
       availableSp: 100,
       aptitudes: allA,
@@ -1977,13 +2018,15 @@ describe('Aptitude Conditions from master.mdb tag_id (PR #7 Root Fix)', () => {
     assert.equal(res204292.recommendedSkills[0]?.effectiveGrade, 288 - 239);
 
     const innateOwned = { ...makeCandidate(101351, 0, false), state: 'acquired' };
+    // 本体固有（101351: 340pt）は到達想定スキル評価点に含めない（選択の余地がなく固定のため）。
+    // 適性の値に関わらず合計は 0 のまま。
     assert.equal(
       solver.solve([innateOwned], { availableSp: 0, aptitudes: allA, lockedSkillIds: [], excludedSkillIds: [] }).maxGradeValue,
-      340
+      0
     );
     assert.equal(
       solver.solve([innateOwned], { availableSp: 0, aptitudes: allG, lockedSkillIds: [], excludedSkillIds: [] }).maxGradeValue,
-      340
+      0
     );
   });
 });
