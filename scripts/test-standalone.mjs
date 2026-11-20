@@ -1831,3 +1831,81 @@ describe('Capture Resolution Warning Check (checkCaptureResolution)', () => {
     assert.equal(checkCaptureResolution(1191, 670).isLowResolution, false, '1191x670 landscape >= 1000x560');
   });
 });
+
+// ────────────────────────────────────────────────────────────────
+// 適性条件オーバーレイ（説明文にしか条件が無いスキルの補完）
+// ────────────────────────────────────────────────────────────────
+describe('Aptitude Overrides (説明文由来の適性条件)', () => {
+  const masterStore = new MasterStore(
+    JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'))
+  );
+  masterStore.applyAptitudeOverrides(
+    JSON.parse(fs.readFileSync(resolveDataFile('skill_aptitude_overrides.json'), 'utf8'))
+  );
+
+  // 全適性 A（倍率 1.1）
+  const aptitudes = {
+    turf: 'A', dirt: 'G',
+    short: 'A', mile: 'A', middle: 'A', long: 'A',
+    nige: 'A', senkou: 'A', sashi: 'A', oikomi: 'A',
+  };
+
+  const gradeOf = (id) => {
+    const s = masterStore.skillsById.get(id);
+    assert.ok(s, `Master skill ${id} must exist`);
+    return calculateEffectiveGradeValue(s.gradeValue, s.distanceTypes, s.runningStyles, aptitudes);
+  };
+
+  test('＜作戦・先行＞ は「作戦」を無視して脚質のみ補完する', () => {
+    const s = masterStore.skillsById.get(900951); // 念い、信ずればこそ
+    assert.deepEqual(s.runningStyles, [2]);
+    assert.deepEqual(s.distanceTypes, []);
+  });
+
+  test('＜先行・芝＞ は芝（倍率対象外）を無視して脚質のみ補完する', () => {
+    const s = masterStore.skillsById.get(901331); // Weaving History
+    assert.deepEqual(s.runningStyles, [2]);
+    assert.deepEqual(s.distanceTypes, []);
+  });
+
+  test('＜または＞型は同軸の複数値になり、適性Aで1.1倍になる', () => {
+    const s = masterStore.skillsById.get(92111091); // ずっとずっと輝いて
+    assert.deepEqual(s.distanceTypes, [2, 3]);
+    assert.deepEqual(s.runningStyles, []);
+    assert.equal(s.gradeValue, 240);
+    assert.equal(gradeOf(92111091), 264);
+  });
+
+  test('継承進化にも補完が効く（黄金を訪ねて 240 -> 264）', () => {
+    const s = masterStore.skillsById.get(91101351);
+    assert.deepEqual(s.runningStyles, [3, 4]);
+    assert.deepEqual(s.distanceTypes, []);
+    assert.equal(gradeOf(91101351), 264);
+  });
+
+  test('かつ型は距離と脚質の両方が入り、乗算される', () => {
+    const s = masterStore.skillsById.get(920771); // 一杯全力、お届けします！＜先行・長距離＞
+    assert.deepEqual(s.distanceTypes, [4]);
+    assert.deepEqual(s.runningStyles, [2]);
+    assert.equal(gradeOf(920771), Math.round(180 * 1.1 * 1.1));
+  });
+
+  test('マスタに値がある軸は上書きしない（空の軸だけ補完）', () => {
+    const isolated = new MasterStore(
+      JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'))
+    );
+    assert.deepEqual(isolated.skillsById.get(201102).distanceTypes, [3]); // 中距離直線○
+    isolated.applyAptitudeOverrides({ '201102': { distanceTypes: [1], runningStyles: [4] } });
+    assert.deepEqual(isolated.skillsById.get(201102).distanceTypes, [3], 'マスタ優先');
+    assert.deepEqual(isolated.skillsById.get(201102).runningStyles, [4], '空の軸だけ補完');
+  });
+
+  test('未知IDや注記キーは無視され、例外にならない', () => {
+    const isolated = new MasterStore(
+      JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'))
+    );
+    assert.doesNotThrow(() =>
+      isolated.applyAptitudeOverrides({ '999999999': { distanceTypes: [1] }, _note: {} })
+    );
+  });
+});

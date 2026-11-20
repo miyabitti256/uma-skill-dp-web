@@ -51,3 +51,15 @@ export interface SkillMasterData {
   successionEvolutions?: SuccessionEvolutionItem[];
   cards: PlayableCardItem[];
 }
+
+/**
+ * 説明文にしか適性条件が無いスキルの補完データ（1件分）。
+ * マスタ側の distanceTypes / runningStyles が空のときだけ補完に使う（マスタ優先）。
+ */
+export interface SkillAptitudeOverride {
+  distanceTypes?: number[]; // 1:短距離, 2:マイル, 3:中距離, 4:長距離
+  runningStyles?: number[]; // 1:逃げ, 2:先行, 3:差し, 4:追込
+}
+
+/** スキルID（文字列）→ 補完データ。先頭が "_" のキーは注記として無視する */
+export type SkillAptitudeOverrides = Record<string, SkillAptitudeOverride>;
