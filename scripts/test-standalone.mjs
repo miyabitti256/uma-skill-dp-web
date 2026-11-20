@@ -1908,4 +1908,14 @@ describe('Aptitude Overrides (説明文由来の適性条件)', () => {
       isolated.applyAptitudeOverrides({ '999999999': { distanceTypes: [1] }, _note: {} })
     );
   });
+  test('文面から判断した条件も補完できる（超長距離回復 3000m以上 -> 長距離）', () => {
+    // 超長距離回復○ 204293（217/SP160）・◎ 204292（262/SP80）は ＜＞ 表記が無いが、
+    // 本文「3000m以上のレースなら」から長距離条件と判断して distanceTypes [4] を補完している。
+    const circle = masterStore.skillsById.get(204293);
+    const double = masterStore.skillsById.get(204292);
+    assert.deepEqual(circle.distanceTypes, [4]);
+    assert.deepEqual(double.distanceTypes, [4]);
+    assert.equal(gradeOf(204293), 239); // 217 × 1.1（長距離A）
+    assert.equal(gradeOf(204292), 288); // 262 × 1.1（長距離A）
+  });
 });
