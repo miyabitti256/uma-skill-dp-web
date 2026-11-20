@@ -6929,7 +6929,9 @@
       "dispOrder": 30,
       "distanceTypes": [],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 900761,
@@ -7036,7 +7038,10 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        1,
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -7199,7 +7204,9 @@
       "dispOrder": 30,
       "distanceTypes": [],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 900911,
@@ -7288,7 +7295,9 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -7361,7 +7370,9 @@
       "dispOrder": 30,
       "distanceTypes": [],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        2
+      ]
     },
     {
       "id": 901001,
@@ -7630,7 +7641,9 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        4
+      ],
       "groundTypes": []
     },
     {
@@ -7793,7 +7806,9 @@
       "dispOrder": 30,
       "distanceTypes": [],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 901301,
@@ -7846,8 +7861,12 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
-      "groundTypes": []
+      "runningStyles": [
+        3
+      ],
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 901331,
@@ -7864,8 +7883,12 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
-      "groundTypes": []
+      "runningStyles": [
+        2
+      ],
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 901341,
@@ -7900,7 +7923,10 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        3,
+        4
+      ],
       "groundTypes": []
     },
     {
@@ -7917,7 +7943,10 @@
       "skillCategory": 5,
       "iconId": 0,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -7935,7 +7964,10 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3,
+        4
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -7954,7 +7986,10 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        1,
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -7972,7 +8007,9 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        3
+      ],
       "groundTypes": []
     },
     {
@@ -8008,7 +8045,10 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2,
+        4
+      ],
       "groundTypes": []
     },
     {
@@ -8026,7 +8066,10 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2,
+        3
+      ],
       "groundTypes": []
     },
     {
@@ -8620,7 +8663,9 @@
       "iconId": 20041,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        4
+      ],
       "groundTypes": []
     },
     {
@@ -8800,7 +8845,9 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -8907,7 +8954,10 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3,
+        4
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -9377,7 +9427,9 @@
       "dispOrder": 30,
       "distanceTypes": [],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        2
+      ]
     },
     {
       "id": 910821,
@@ -9466,7 +9518,9 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -9483,7 +9537,9 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        1
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -9502,7 +9558,9 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        3
+      ],
       "groundTypes": []
     },
     {
@@ -9519,7 +9577,9 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        4
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -9593,7 +9653,9 @@
       "dispOrder": 30,
       "distanceTypes": [],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        2
+      ]
     },
     {
       "id": 910991,
@@ -9663,7 +9725,9 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -9717,7 +9781,9 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -9753,9 +9819,14 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 911101,
@@ -9772,7 +9843,9 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -9807,7 +9880,9 @@
       "skillCategory": 5,
       "iconId": 0,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -9844,7 +9919,9 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -9861,7 +9938,10 @@
       "skillCategory": 5,
       "iconId": 0,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3,
+        4
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -9987,7 +10067,10 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3,
+        4
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -10006,8 +10089,12 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
-      "groundTypes": []
+      "runningStyles": [
+        1
+      ],
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 920101,
@@ -10024,7 +10111,9 @@
       "iconId": 20011,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -10078,7 +10167,10 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2,
+        3
+      ],
       "groundTypes": []
     },
     {
@@ -10114,8 +10206,12 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
-      "groundTypes": []
+      "runningStyles": [
+        1
+      ],
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 920221,
@@ -10132,7 +10228,9 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -10186,7 +10284,9 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        3
+      ],
       "groundTypes": []
     },
     {
@@ -10293,7 +10393,9 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -10330,7 +10432,10 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        1,
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -10367,7 +10472,9 @@
       "dispOrder": 30,
       "distanceTypes": [],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        2
+      ]
     },
     {
       "id": 920481,
@@ -10383,7 +10490,10 @@
       "skillCategory": 5,
       "iconId": 20011,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3,
+        4
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -10509,8 +10619,12 @@
       "skillCategory": 5,
       "iconId": 0,
       "dispOrder": 30,
-      "distanceTypes": [],
-      "runningStyles": [],
+      "distanceTypes": [
+        4
+      ],
+      "runningStyles": [
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -10528,7 +10642,10 @@
       "iconId": 20016,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        3,
+        4
+      ],
       "groundTypes": []
     },
     {
@@ -10546,7 +10663,10 @@
       "iconId": 0,
       "dispOrder": 30,
       "distanceTypes": [],
-      "runningStyles": [],
+      "runningStyles": [
+        1,
+        2
+      ],
       "groundTypes": []
     },
     {
@@ -10563,9 +10683,14 @@
       "skillCategory": 5,
       "iconId": 20016,
       "dispOrder": 30,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 202051,
@@ -13445,7 +13570,9 @@
         2
       ],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 102902211,
@@ -13483,7 +13610,9 @@
         2
       ],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 200342,
@@ -15546,7 +15675,9 @@
       "runningStyles": [
         1
       ],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 102602111,
@@ -16328,7 +16459,9 @@
       "skillCategory": 3,
       "iconId": 20016,
       "dispOrder": 2380,
-      "distanceTypes": [],
+      "distanceTypes": [
+        1
+      ],
       "runningStyles": [
         2
       ],
@@ -23326,7 +23459,9 @@
       "skillCategory": 3,
       "iconId": 20016,
       "dispOrder": 20995,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2
+      ],
       "runningStyles": [
         4
       ],
@@ -24165,7 +24300,10 @@
       "skillCategory": 1,
       "iconId": 20046,
       "dispOrder": 21275,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -24204,7 +24342,9 @@
       "skillCategory": 1,
       "iconId": 20046,
       "dispOrder": 21275,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -24588,7 +24728,9 @@
       "skillCategory": 4,
       "iconId": 20016,
       "dispOrder": 21345,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -24826,7 +24968,9 @@
         3
       ],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 201682,
@@ -25242,7 +25386,10 @@
       "skillCategory": 3,
       "iconId": 20046,
       "dispOrder": 21440,
-      "distanceTypes": [],
+      "distanceTypes": [
+        1,
+        2
+      ],
       "runningStyles": [
         2
       ],
@@ -26106,7 +26253,9 @@
         4
       ],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 106902211,
@@ -26542,7 +26691,9 @@
       "skillCategory": 3,
       "iconId": 20016,
       "dispOrder": 21670,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         3
       ],
@@ -26764,7 +26915,9 @@
       "skillCategory": 2,
       "iconId": 20016,
       "dispOrder": 21710,
-      "distanceTypes": [],
+      "distanceTypes": [
+        4
+      ],
       "runningStyles": [
         3
       ],
@@ -27040,7 +27193,10 @@
       "skillCategory": 4,
       "iconId": 0,
       "dispOrder": 21740,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [
         2,
         3
@@ -27967,7 +28123,9 @@
       "skillCategory": 2,
       "iconId": 0,
       "dispOrder": 22000,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2
+      ],
       "runningStyles": [
         2
       ],
@@ -28107,7 +28265,9 @@
       "skillCategory": 2,
       "iconId": 20016,
       "dispOrder": 22040,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         1
       ],
@@ -28356,7 +28516,10 @@
       "skillCategory": 2,
       "iconId": 20016,
       "dispOrder": 22080,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [
         2
       ],
@@ -28708,7 +28871,9 @@
       "skillCategory": 3,
       "iconId": 20016,
       "dispOrder": 22140,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         3
       ],
@@ -28810,7 +28975,9 @@
       "skillCategory": 3,
       "iconId": 20016,
       "dispOrder": 22160,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         1
       ],
@@ -29617,7 +29784,9 @@
         3
       ],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        2
+      ]
     },
     {
       "id": 108601211,
@@ -29654,7 +29823,9 @@
       "skillCategory": 2,
       "iconId": 0,
       "dispOrder": 22280,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2
+      ],
       "runningStyles": [
         2
       ],
@@ -31086,7 +31257,9 @@
       "skillCategory": 3,
       "iconId": 20046,
       "dispOrder": 22620,
-      "distanceTypes": [],
+      "distanceTypes": [
+        4
+      ],
       "runningStyles": [
         2,
         3
@@ -31227,7 +31400,9 @@
       "skillCategory": 2,
       "iconId": 20016,
       "dispOrder": 22640,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -31707,7 +31882,9 @@
       "skillCategory": 2,
       "iconId": 20366,
       "dispOrder": 22760,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -32250,7 +32427,10 @@
       "skillCategory": 3,
       "iconId": 20046,
       "dispOrder": 22920,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [
         4
       ],
@@ -32930,7 +33110,9 @@
       "skillCategory": 3,
       "iconId": 0,
       "dispOrder": 23120,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         2,
         4
@@ -32993,7 +33175,9 @@
       "skillCategory": 2,
       "iconId": 20016,
       "dispOrder": 23140,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         2
       ],
@@ -33013,7 +33197,9 @@
       "skillCategory": 2,
       "iconId": 20016,
       "dispOrder": 23140,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         2
       ],
@@ -33374,7 +33560,9 @@
       "skillCategory": 2,
       "iconId": 20016,
       "dispOrder": 23260,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         2
       ],
@@ -33704,7 +33892,9 @@
         3
       ],
       "runningStyles": [],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 203112,
@@ -33846,7 +34036,10 @@
       "skillCategory": 3,
       "iconId": 20016,
       "dispOrder": 23420,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [
         2
       ],
@@ -34354,7 +34547,9 @@
       "skillCategory": 2,
       "iconId": 20016,
       "dispOrder": 23600,
-      "distanceTypes": [],
+      "distanceTypes": [
+        1
+      ],
       "runningStyles": [
         2
       ],
@@ -34374,12 +34569,17 @@
       "skillCategory": 2,
       "iconId": 0,
       "dispOrder": 23600,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [
         2,
         3
       ],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 203222,
@@ -34455,7 +34655,10 @@
       "skillCategory": 1,
       "iconId": 20016,
       "dispOrder": 23620,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [
         2
       ],
@@ -34661,7 +34864,9 @@
         2,
         3
       ],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 203302,
@@ -36047,7 +36252,9 @@
       "skillCategory": 3,
       "iconId": 20046,
       "dispOrder": 24220,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2
+      ],
       "runningStyles": [],
       "groundTypes": [
         1
@@ -36874,7 +37081,9 @@
       "skillCategory": 2,
       "iconId": 0,
       "dispOrder": 24480,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         3,
         4
@@ -38434,7 +38643,9 @@
       "skillCategory": 4,
       "iconId": 20016,
       "dispOrder": 25110,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         2
       ],
@@ -38765,7 +38976,9 @@
         2,
         3
       ],
-      "groundTypes": []
+      "groundTypes": [
+        2
+      ]
     },
     {
       "id": 204112,
@@ -39475,7 +39688,9 @@
       "skillCategory": 2,
       "iconId": 20016,
       "dispOrder": 25450,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2
+      ],
       "runningStyles": [
         2
       ],
@@ -40380,7 +40595,9 @@
       "skillCategory": 2,
       "iconId": 0,
       "dispOrder": 25970,
-      "distanceTypes": [],
+      "distanceTypes": [
+        4
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -40398,7 +40615,9 @@
       "skillCategory": 2,
       "iconId": 0,
       "dispOrder": 25980,
-      "distanceTypes": [],
+      "distanceTypes": [
+        4
+      ],
       "runningStyles": [],
       "groundTypes": []
     },
@@ -40528,7 +40747,9 @@
       "runningStyles": [
         1
       ],
-      "groundTypes": []
+      "groundTypes": [
+        1
+      ]
     },
     {
       "id": 204542,
@@ -41298,7 +41519,9 @@
       "skillCategory": 2,
       "iconId": 0,
       "dispOrder": 26470,
-      "distanceTypes": [],
+      "distanceTypes": [
+        3
+      ],
       "runningStyles": [
         3,
         4
@@ -41591,7 +41814,10 @@
       "skillCategory": 2,
       "iconId": 0,
       "dispOrder": 26630,
-      "distanceTypes": [],
+      "distanceTypes": [
+        2,
+        3
+      ],
       "runningStyles": [
         3
       ],

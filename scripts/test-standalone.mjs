@@ -1504,7 +1504,7 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
       lastSeenTimestamp: 0,
     };
 
-    // 1. 候補状態 (進化可能ラベルあり): 継承進化(240pt)評価により 210pt スキルに勝利する
+    // 1. 候補状態 (進化可能ラベルあり): 継承進化(240 * 1.1 = 264pt)評価により 210pt スキルに勝利する
     const resCandidate = solver.solve([stayGoldInherited, rivalWhite], {
       availableSp: 200,
       aptitudes: defaultAptitudes,
@@ -1513,16 +1513,16 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
       excludedSkillIds: [],
     });
     assert.deepEqual(resCandidate.recommendedSkills.map((r) => r.skill.id), [901351]);
-    assert.equal(resCandidate.recommendedSkills[0].effectiveGrade, 240);
-    assert.equal(resCandidate.recommendedSkills[0].costPerformance, 1.2);
-    assert.equal(resCandidate.totalAdditionalGrade, 240);
-    assert.equal(resCandidate.maxGradeValue, 240);
+    assert.equal(resCandidate.recommendedSkills[0].effectiveGrade, 264);
+    assert.equal(resCandidate.recommendedSkills[0].costPerformance, 1.32);
+    assert.equal(resCandidate.totalAdditionalGrade, 264);
+    assert.equal(resCandidate.maxGradeValue, 264);
     const succRec = resCandidate.evolutionRecommendations.find((e) => e.slotType === 'succession');
     assert.ok(succRec && succRec.canEvolve && succRec.baseSkillId === 901351);
     assert.equal(succRec.evolvedSkill?.id, 91101351);
     assert.equal(succRec.evolvedSkill?.gradeValue, 240);
 
-    // 1b. 候補状態 (進化可能ラベルなし): 180pt 扱いのままなので 210pt スキルが選ばれる
+    // 1b. 候補状態 (進化可能ラベルなし): 198pt(180*1.1) 扱いのため 210pt スキルが選ばれる
     const resNoBadge = solver.solve([stayGoldNoBadge, rivalWhite], {
       availableSp: 200,
       aptitudes: defaultAptitudes,
@@ -1534,7 +1534,7 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
     assert.equal(resNoBadge.maxGradeValue, 210);
     assert.equal(resNoBadge.evolutionRecommendations.some((e) => e.slotType === 'succession'), false);
 
-    // 2. 選択中 / 獲得済み状態 (進化可能ラベルあり: SP 0 でも +60pt の進化増分を加算、ラベルなし: 180pt)
+    // 2. 選択中 / 獲得済み状態 (進化可能ラベルあり: SP 0 でも +66pt の進化増分を加算、ラベルなし: 198pt)
     for (const state of ['selected', 'acquired']) {
       const owned = makeDetectedSkill(901351, { recognizedCost: 0, state, canEvolve: true });
       const resOwned = solver.solve([owned], {
@@ -1546,8 +1546,8 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
       });
       assert.deepEqual(resOwned.recommendedSkills, []);
       assert.equal(resOwned.spentSp, 0);
-      assert.equal(resOwned.totalAdditionalGrade, 60, `Must add +60pt evolution bonus for ${state} state`);
-      assert.equal(resOwned.maxGradeValue, 240, `Max grade must be 240pt for ${state} state`);
+      assert.equal(resOwned.totalAdditionalGrade, 66, `Must add +66pt evolution bonus for ${state} state`);
+      assert.equal(resOwned.maxGradeValue, 264, `Max grade must be 264pt for ${state} state`);
       const ownedRec = resOwned.evolutionRecommendations.find((e) => e.slotType === 'succession');
       assert.ok(ownedRec && ownedRec.canEvolve && ownedRec.evolvedSkill?.id === 91101351);
 
@@ -1560,10 +1560,10 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
         excludedSkillIds: [],
       });
       assert.equal(resOwnedNoBadge.totalAdditionalGrade, 0);
-      assert.equal(resOwnedNoBadge.maxGradeValue, 180);
+      assert.equal(resOwnedNoBadge.maxGradeValue, 198);
     }
 
-    // 3. 本人カード (113501) 指定時はラベルフラグに関わらず進化しない (180pt 扱い)
+    // 3. 本人カード (113501) 指定時はラベルフラグに関わらず進化しない (198pt 扱い)
     const resSelf = solver.solve([stayGoldInherited], {
       availableSp: 200,
       aptitudes: defaultAptitudes,
@@ -1571,7 +1571,7 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
       lockedSkillIds: [],
       excludedSkillIds: [],
     });
-    assert.equal(resSelf.maxGradeValue, 180);
+    assert.equal(resSelf.maxGradeValue, 198);
     assert.equal(resSelf.evolutionRecommendations.some((e) => e.slotType === 'succession'), false);
   });
 
@@ -1580,8 +1580,8 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
     const zenshin = makeDetectedSkill(200511, { recognizedCost: 170 }); // chara Lv5: 508 -> 633
     const kikotsu = makeDetectedSkill(202751, { recognizedCost: 180 }); // scenario: 559 -> 696
     const moyuru = makeDetectedSkill(204051, { recognizedCost: 180 }); // scenario: 559 -> 696
-    const stayGold = makeDetectedSkill(901351, { recognizedCost: 200, canEvolve: true }); // succession: 180 -> 240
-    const rheinKraft = makeDetectedSkill(911091, { recognizedCost: 200, canEvolve: true }); // succession: 180 -> 240
+    const stayGold = makeDetectedSkill(901351, { recognizedCost: 200, canEvolve: true }); // succession: 198 -> 264
+    const rheinKraft = makeDetectedSkill(911091, { recognizedCost: 200, canEvolve: true }); // succession: 198 -> 264
 
     const res = solver.solve([zenshin, kikotsu, moyuru, stayGold, rheinKraft], {
       availableSp: 930,
@@ -1593,8 +1593,8 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
     });
 
     assert.equal(res.recommendedSkills.length, 5);
-    assert.equal(res.totalAdditionalGrade, 633 + 696 + 696 + 240 + 240);
-    assert.equal(res.maxGradeValue, 2505);
+    assert.equal(res.totalAdditionalGrade, 633 + 696 + 696 + 264 + 264);
+    assert.equal(res.maxGradeValue, 2553);
     assert.equal(res.evolutionRecommendations.filter((e) => e.canEvolve).length, 5);
     assert.deepEqual(
       res.evolutionRecommendations
@@ -1829,5 +1829,161 @@ describe('Capture Resolution Warning Check (checkCaptureResolution)', () => {
     assert.equal(checkCaptureResolution(395, 702).isLowResolution, false, '395x702 portrait >= 380x670');
     assert.equal(checkCaptureResolution(943, 530).isLowResolution, true, '943x530 landscape low-res');
     assert.equal(checkCaptureResolution(1191, 670).isLowResolution, false, '1191x670 landscape >= 1000x560');
+  });
+});
+
+describe('Aptitude Conditions from master.mdb tag_id (PR #7 Root Fix)', () => {
+  const masterData = JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'));
+  const masterStore = new MasterStore(masterData);
+  const solver = new TypeScriptSkillSolver(masterStore);
+  const allA = {
+    turf: 'A',
+    dirt: 'A',
+    short: 'A',
+    mile: 'A',
+    middle: 'A',
+    long: 'A',
+    nige: 'A',
+    senkou: 'A',
+    sashi: 'A',
+    oikomi: 'A',
+  };
+  const allG = {
+    turf: 'G',
+    dirt: 'G',
+    short: 'G',
+    mile: 'G',
+    middle: 'G',
+    long: 'G',
+    nige: 'G',
+    senkou: 'G',
+    sashi: 'G',
+    oikomi: 'G',
+  };
+
+  function makeCandidate(skillId, recognizedCost, canEvolve = false) {
+    const m = masterStore.skillsById.get(skillId);
+    assert.ok(m, `Master skill ${skillId} must exist`);
+    return {
+      id: m.id,
+      name: m.name,
+      recognizedCost,
+      baseCost: m.needSkillPoint,
+      gradeValue: m.gradeValue,
+      rarity: m.rarity,
+      groupId: m.groupId,
+      groupRate: m.groupRate,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve,
+      lastSeenTimestamp: 0,
+    };
+  }
+
+  test('applies distanceTypes/runningStyles from tag_id to inherited uniques, succession evolutions, and body-text skills while keeping innate uniques fixed', () => {
+    // What: Verifies that skill_master.json captures distance/style aptitude conditions from tag_id for
+    // (1) inherited uniques (901351, 901411, 911091, 910881, 920771) with 1.1x/0.7x/1.21x scaling,
+    // (2) succession evolutions (91101351, 91101411, 92111091) with 240 -> 264 scaling,
+    // (3) normal/evolved skills without <...> distance tags (204292, 101003111, 113101211, 114501211), and
+    // (4) innate unique skills (101351) remaining empty [] and fixed at 340pt regardless of aptitudes.
+    assert.deepEqual(masterStore.skillsById.get(901351)?.distanceTypes, []);
+    assert.deepEqual(masterStore.skillsById.get(901351)?.runningStyles, [3, 4]);
+    assert.deepEqual(masterStore.skillsById.get(901411)?.distanceTypes, []);
+    assert.deepEqual(masterStore.skillsById.get(901411)?.runningStyles, [1, 2]);
+    assert.deepEqual(masterStore.skillsById.get(911091)?.distanceTypes, [2, 3]);
+    assert.deepEqual(masterStore.skillsById.get(911091)?.runningStyles, []);
+    assert.deepEqual(masterStore.skillsById.get(910881)?.distanceTypes, []);
+    assert.deepEqual(masterStore.skillsById.get(910881)?.runningStyles, [3]);
+    assert.deepEqual(masterStore.skillsById.get(920771)?.distanceTypes, [4]);
+    assert.deepEqual(masterStore.skillsById.get(920771)?.runningStyles, [2]);
+
+    assert.deepEqual(masterStore.skillsById.get(91101351)?.distanceTypes, []);
+    assert.deepEqual(masterStore.skillsById.get(91101351)?.runningStyles, [3, 4]);
+    assert.deepEqual(masterStore.skillsById.get(91101411)?.distanceTypes, []);
+    assert.deepEqual(masterStore.skillsById.get(91101411)?.runningStyles, [1, 2]);
+    assert.deepEqual(masterStore.skillsById.get(92111091)?.distanceTypes, [2, 3]);
+    assert.deepEqual(masterStore.skillsById.get(92111091)?.runningStyles, []);
+
+    assert.deepEqual(masterStore.skillsById.get(204292)?.distanceTypes, [4]);
+    assert.deepEqual(masterStore.skillsById.get(204292)?.runningStyles, []);
+    assert.deepEqual(masterStore.skillsById.get(101003111)?.distanceTypes, [2]);
+    assert.deepEqual(masterStore.skillsById.get(101003111)?.runningStyles, [2]);
+    assert.deepEqual(masterStore.skillsById.get(113101211)?.distanceTypes, [2]);
+    assert.deepEqual(masterStore.skillsById.get(113101211)?.runningStyles, []);
+    assert.deepEqual(masterStore.skillsById.get(114501211)?.distanceTypes, [3]);
+    assert.deepEqual(masterStore.skillsById.get(114501211)?.runningStyles, [2, 4]);
+
+    const innate = masterStore.skillsById.get(101351);
+    assert.ok(innate && innate.rarity === 5);
+    assert.deepEqual(innate.distanceTypes, []);
+    assert.deepEqual(innate.runningStyles, []);
+    assert.deepEqual(innate.groundTypes, []);
+
+    // Inherited uniques: A -> 198 (or 218 for 2-axis 920771), G -> 126
+    for (const sid of [901351, 901411, 911091, 910881]) {
+      const resA = solver.solve([makeCandidate(sid, 200, false)], {
+        availableSp: 200,
+        aptitudes: allA,
+        lockedSkillIds: [],
+        excludedSkillIds: [],
+      });
+      assert.equal(resA.recommendedSkills[0]?.effectiveGrade, 198, `Skill ${sid} at A must be 198`);
+
+      const resG = solver.solve([makeCandidate(sid, 200, false)], {
+        availableSp: 200,
+        aptitudes: allG,
+        lockedSkillIds: [],
+        excludedSkillIds: [],
+      });
+      assert.equal(resG.recommendedSkills[0]?.effectiveGrade, 126, `Skill ${sid} at G must be 126`);
+    }
+    const resCompoundA = solver.solve([makeCandidate(920771, 200, false)], {
+      availableSp: 200,
+      aptitudes: allA,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resCompoundA.recommendedSkills[0]?.effectiveGrade, 218, '920771 at A*A must be 218');
+
+    // Succession evolutions: A -> 264, G -> 168
+    for (const sid of [901351, 901411, 911091]) {
+      const resEvoA = solver.solve([makeCandidate(sid, 200, true)], {
+        availableSp: 200,
+        aptitudes: allA,
+        selectedCardId: 100101,
+        lockedSkillIds: [],
+        excludedSkillIds: [],
+      });
+      assert.equal(resEvoA.recommendedSkills[0]?.effectiveGrade, 264, `Evolved ${sid} at A must be 264`);
+    }
+
+    // Body-text normal skills 204293 (○: 217 * 1.1 = 239) & 204292 (◎: 262 * 1.1 = 288, +49 delta)
+    // and innate unique 101351 (340 fixed)
+    const res204293 = solver.solve([makeCandidate(204293, 100, false)], {
+      availableSp: 100,
+      aptitudes: allA,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(res204293.recommendedSkills[0]?.effectiveGrade, 239);
+
+    const res204292 = solver.solve([makeCandidate(204292, 100, false)], {
+      availableSp: 100,
+      aptitudes: allA,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(res204292.recommendedSkills[0]?.effectiveGrade, 288 - 239);
+
+    const innateOwned = { ...makeCandidate(101351, 0, false), state: 'acquired' };
+    assert.equal(
+      solver.solve([innateOwned], { availableSp: 0, aptitudes: allA, lockedSkillIds: [], excludedSkillIds: [] }).maxGradeValue,
+      340
+    );
+    assert.equal(
+      solver.solve([innateOwned], { availableSp: 0, aptitudes: allG, lockedSkillIds: [], excludedSkillIds: [] }).maxGradeValue,
+      340
+    );
   });
 });
