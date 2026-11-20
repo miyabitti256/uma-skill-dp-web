@@ -1,0 +1,19 @@
+{
+  "editions": [
+    {
+      "id": "2026-10",
+      "name": "駿大祭編",
+      "scenarioId": 15,
+      "skillBonus": { "normal": 400, "rare": 1200, "evolved": 1500 },
+      "courses": [
+        {
+          "id": "free",
+          "name": "フリー課程",
+          "aptitudeAxis": { "kind": "none" },
+          "bonusSkills": null,
+          "thresholds": { "ka": null, "ryo": null, "yu": null }
+        }
+      ]
+    }
+  ]
+}

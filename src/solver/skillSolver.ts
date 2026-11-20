@@ -8,6 +8,7 @@ import type {
 import type { DetectedSkillItem, AptitudeState, AptitudeRank } from '../types/recognition.ts';
 import { MasterStore } from '../data/masterStore.ts';
 import type { CharaEvolutionItem, SkillMasterItem } from '../types/master.ts';
+import type { SkillBonusTable, SkillTestSolveConfig } from '../types/skillTest.ts';
 
 /**
  * 適性ランク値から評価点倍率を取得
@@ -99,6 +100,40 @@ function calculateEffectiveGradeValue(
   return Math.round(gradeValue * rDist * rStyle);
 }
 
+/**
+ * 技能試験: rarity からスキル獲得ボーナスの基礎値を返す
+ * 1: ノーマル(白・緑), 2: レア(金), 6: 進化。固有(3..5)やその他は 0（加点対象外）。
+ */
+function tierBonus(rarity: number, table: SkillBonusTable): number {
+  switch (rarity) {
+    case 1:
+      return table.normal;
+    case 2:
+      return table.rare;
+    case 6:
+      return table.evolved;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * 技能試験: スキル1個ぶんのスキル獲得ボーナス
+ * - config が undefined（評価点モード）→ 常に 0
+ * - bonusSkillIds === null（フリー課程 = 全スキー対象）→ tierBonus(rarity)
+ * - それ以外 → ボーナス対象IDに含まれる場合のみ tierBonus(rarity)
+ */
+function bonusPointsOf(
+  skillId: number,
+  rarity: number,
+  config: SkillTestSolveConfig | undefined
+): number {
+  if (!config) return 0;
+  const bonusSkillIds = config.bonusSkillIds;
+  if (bonusSkillIds && !bonusSkillIds.has(skillId)) return 0;
+  return tierBonus(rarity, config.skillBonus);
+}
+
 interface EvoOptionDetail {
   slotType: 'chara_lv3' | 'chara_lv5' | 'scenario' | 'succession';
   evolvedSkill: SkillMasterItem;
@@ -112,6 +147,10 @@ interface DpOption {
   actualCost: number;
   dpCost: number;
   effectiveGrade: number;
+  /** このオプションで増えるスキル獲得ボーナス（評価点モードでは常に 0） */
+  bonusPoints: number;
+  /** DP に載せる価値: courseMultiplier * effectiveGrade + bonusPoints（評価点モードでは effectiveGrade と一致） */
+  scoreValue: number;
   costPerformance: number;
   isLocked: boolean;
   needC3: 0 | 1;
@@ -142,6 +181,13 @@ export class TypeScriptSkillSolver implements ISkillSolver {
     const { availableSp, aptitudes, selectedCardId, selectedScenarioId } = options;
     const excludedSet = new Set(options.excludedSkillIds ?? []);
     const lockedSet = new Set(options.lockedSkillIds ?? []);
+
+    // 0. 最適化モードの解決
+    // 技能試験モードはソルバ用設定（courseMultiplier / skillBonus / bonusSkillIds）が揃っているときのみ有効。
+    // mode === 'skillTest' でも設定が無ければ評価点モードへフォールバックする（後方互換）。
+    const skillTestConfig =
+      options.mode === 'skillTest' && options.skillTest ? options.skillTest : undefined;
+    const courseMultiplier = skillTestConfig ? skillTestConfig.courseMultiplier : 1.0;
 
     // 1. スキルの分類（獲得済み・選択中・候補）
     // 同一 groupId に複数の acquired/selected がある場合は最大 groupRate（同率なら最大評価点）のみを現在評価点に採用
@@ -185,6 +231,19 @@ export class TypeScriptSkillSolver implements ISkillSolver {
       currentGradeSum += entry.effectiveGrade;
     }
 
+    // 技能試験: 既取得（選択中含む）スキルのスキル獲得ボーナス合計
+    // acquiredOrSelectedByGroup は系統単位で重複排除済みなので、そのまま合計すればよい
+    // 技能試験: 既取得（選択中含む）スキルのスキル獲得ボーナス合計
+    // acquiredOrSelectedByGroup は系統単位で重複排除済みなので、そのまま合計すればよい。
+    // ただしマイナス効果（紫）スキルはボーナス対象外なので、groupRate<=0 / gradeValue<=0 は加点しない。
+    let acquiredSkillBonus = 0;
+    if (skillTestConfig) {
+      for (const entry of acquiredOrSelectedByGroup.values()) {
+        if (entry.skill.groupRate <= 0 || entry.skill.gradeValue <= 0) continue;
+        acquiredSkillBonus += bonusPointsOf(entry.skill.id, entry.skill.rarity, skillTestConfig);
+      }
+    }
+
     // candidateSkills の中に同グループの groupRate === 1 (○) があるか
     const unselectedGroupRate1Map = new Map<number, DetectedSkillItem>();
     for (const s of candidateSkills) {
@@ -221,6 +280,12 @@ export class TypeScriptSkillSolver implements ISkillSolver {
       );
 
       const baseGroupEff = acquiredLower ? acquiredLower.effectiveGrade : 0;
+      // 技能試験: 同じ系統で既に取得済みのスキルが計上しているボーナス（差分計算の基準）
+      // マイナス効果（紫）スキルはボーナス対象外なので基準にも数えない
+      const baseGroupBonus =
+        acquiredLower && acquiredLower.skill.groupRate > 0 && acquiredLower.skill.gradeValue > 0
+          ? bonusPointsOf(acquiredLower.skill.id, acquiredLower.skill.rarity, skillTestConfig)
+          : 0;
       let cost = skill.recognizedCost;
       let baseGain = Math.max(0, effGrade - baseGroupEff);
 
@@ -252,6 +317,26 @@ export class TypeScriptSkillSolver implements ISkillSolver {
       const isLocked = skill.isLocked || lockedSet.has(skill.id);
       const skillOptions: DpOption[] = [];
 
+      /**
+       * オプションの Δボーナスとスコアを求める。
+       * 技能試験: 進化オプションは進化後IDの rarity 6（=1,500）で判定し、系統の基準ボーナスとの差を取る。
+       * 評価点モード: bonusPoints === 0 / scoreValue === effectiveGrade（既存と完全一致）。
+       */
+      const computeOptionValues = (
+        effectiveGrade: number,
+        evoDetail?: EvoOptionDetail
+      ): { bonusPoints: number; scoreValue: number } => {
+        const bonusPoints = skillTestConfig
+          ? (evoDetail
+              ? bonusPointsOf(evoDetail.evolvedSkill.id, 6, skillTestConfig)
+              : bonusPointsOf(skill.id, skill.rarity, skillTestConfig)) - baseGroupBonus
+          : 0;
+        const scoreValue = skillTestConfig
+          ? Math.round(courseMultiplier * effectiveGrade + bonusPoints)
+          : effectiveGrade;
+        return { bonusPoints, scoreValue };
+      };
+
       const pushOption = (
         effectiveGrade: number,
         needC3: 0 | 1,
@@ -259,12 +344,16 @@ export class TypeScriptSkillSolver implements ISkillSolver {
         needSc: 0 | 1,
         evoDetail?: EvoOptionDetail
       ): void => {
+        const { bonusPoints, scoreValue } = computeOptionValues(effectiveGrade, evoDetail);
         skillOptions.push({
           skill,
           actualCost: cost,
           dpCost: isLocked ? 0 : cost,
           effectiveGrade,
-          costPerformance: cost > 0 ? Number((effectiveGrade / cost).toFixed(2)) : 999,
+          bonusPoints,
+          scoreValue,
+          // 効率の分子は技能試験ならスコア、評価点モードなら評価点
+          costPerformance: cost > 0 ? Number((scoreValue / cost).toFixed(2)) : 999,
           isLocked,
           needC3,
           needC5,
@@ -278,15 +367,20 @@ export class TypeScriptSkillSolver implements ISkillSolver {
           ? this.collectSuccessionEvolutionDetail(skill.id, effGrade, selectedCardId, aptitudes)
           : undefined;
 
+      // 枝刈りは「スコア」で比較する。評価点モードでは scoreValue === 各評価点なので従来と同値になる。
+      // 技能試験では評価点が下がってもボーナス増で得になる進化（例: 継承進化 +1,100）を取り逃がさないため必須。
+      const baseValues = computeOptionValues(baseGain);
+
       if (successionEvoDetail) {
         const evoGain = Math.max(0, successionEvoDetail.evoEff - baseGroupEff);
-        if (evoGain > baseGain || (isLocked && evoGain > 0)) {
+        const evoValues = computeOptionValues(evoGain, successionEvoDetail);
+        if (evoValues.scoreValue > baseValues.scoreValue || (isLocked && evoValues.scoreValue > 0)) {
           pushOption(evoGain, 0, 0, 0, successionEvoDetail);
-        } else if (isLocked || baseGain > 0) {
+        } else if (isLocked || baseValues.scoreValue > 0) {
           pushOption(baseGain, 0, 0, 0);
         }
       } else {
-        if (isLocked || baseGain > 0) {
+        if (isLocked || baseValues.scoreValue > 0) {
           pushOption(baseGain, 0, 0, 0);
         }
 
@@ -301,7 +395,11 @@ export class TypeScriptSkillSolver implements ISkillSolver {
           );
           for (const evoDetail of evoDetails) {
             const evoGain = Math.max(0, evoDetail.evoEff - baseGroupEff);
-            if (evoGain > baseGain || (isLocked && evoGain > 0)) {
+            const evoValues = computeOptionValues(evoGain, evoDetail);
+            if (
+              evoValues.scoreValue > baseValues.scoreValue ||
+              (isLocked && evoValues.scoreValue > 0)
+            ) {
               pushOption(
                 evoGain,
                 evoDetail.slotType === 'chara_lv3' ? 1 : 0,
@@ -366,6 +464,12 @@ export class TypeScriptSkillSolver implements ISkillSolver {
         );
         if (!succDetail) continue;
 
+        // 技能試験: 既取得グループの進化は「元スキルのボーナス → 進化後（1,500）」の差分を計上する
+        const succBonusPoints = skillTestConfig
+          ? bonusPointsOf(succDetail.evolvedSkill.id, 6, skillTestConfig) -
+            bonusPointsOf(entry.skill.id, entry.skill.rarity, skillTestConfig)
+          : 0;
+
         dpGroups.push({
           canSkip: false,
           isAcquiredGroup: true,
@@ -375,6 +479,10 @@ export class TypeScriptSkillSolver implements ISkillSolver {
               actualCost: 0,
               dpCost: 0,
               effectiveGrade: succDetail.evoDelta,
+              bonusPoints: succBonusPoints,
+              scoreValue: skillTestConfig
+                ? Math.round(courseMultiplier * succDetail.evoDelta + succBonusPoints)
+                : succDetail.evoDelta,
               costPerformance: 999,
               isLocked: false,
               needC3: 0,
@@ -398,18 +506,29 @@ export class TypeScriptSkillSolver implements ISkillSolver {
       );
       if (evoDetails.length === 0) continue;
 
-      const acquiredOptions: DpOption[] = evoDetails.map((evoDetail) => ({
-        skill: entry.skill,
-        actualCost: 0,
-        dpCost: 0,
-        effectiveGrade: evoDetail.evoDelta,
-        costPerformance: 999,
-        isLocked: false,
-        needC3: evoDetail.slotType === 'chara_lv3' ? 1 : 0,
-        needC5: evoDetail.slotType === 'chara_lv5' ? 1 : 0,
-        needSc: evoDetail.slotType === 'scenario' ? 1 : 0,
-        evoDetail,
-      }));
+      const acquiredOptions: DpOption[] = evoDetails.map((evoDetail) => {
+        // 技能試験: 既取得の金スキルを進化させる場合の Δボーナス（1,200 → 1,500 = +300）
+        const bonusPoints = skillTestConfig
+          ? bonusPointsOf(evoDetail.evolvedSkill.id, 6, skillTestConfig) -
+            bonusPointsOf(entry.skill.id, entry.skill.rarity, skillTestConfig)
+          : 0;
+        return {
+          skill: entry.skill,
+          actualCost: 0,
+          dpCost: 0,
+          effectiveGrade: evoDetail.evoDelta,
+          bonusPoints,
+          scoreValue: skillTestConfig
+            ? Math.round(courseMultiplier * evoDetail.evoDelta + bonusPoints)
+            : evoDetail.evoDelta,
+          costPerformance: 999,
+          isLocked: false,
+          needC3: evoDetail.slotType === 'chara_lv3' ? 1 : 0,
+          needC5: evoDetail.slotType === 'chara_lv5' ? 1 : 0,
+          needSc: evoDetail.slotType === 'scenario' ? 1 : 0,
+          evoDetail,
+        };
+      });
       dpGroups.push({
         canSkip: true,
         isAcquiredGroup: true,
@@ -420,6 +539,8 @@ export class TypeScriptSkillSolver implements ISkillSolver {
     // 4. 進化前提 12状態DP (c3 ∈ {0,1} × c5 ∈ {0,1} × sc ∈ {0..maxScen}) による最適化
     const finalRecommended: RecommendedSkill[] = [];
     const dpEvolutionAssignments = new Map<number, DpEvolutionAssignment>();
+    // 技能試験: 既取得グループの進化で増えるスキル獲得ボーナス（推奨リストには載らないため別途集計）
+    let acquiredEvolutionBonus = 0;
 
     if (dpGroups.length > 0) {
       // Why not cap at 5000: modern scenarios reach 8000+ SP, and bounding by totalPossibleSp avoids wasted DP work on low skill counts
@@ -471,7 +592,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
           const opt = group.options[optIdx];
           const cost = opt.dpCost;
           if (cost > maxSp) continue;
-          const gain = opt.effectiveGrade;
+          const gain = opt.scoreValue;
 
           for (let c3 = opt.needC3; c3 <= 1; c3++) {
             const prevC3 = c3 - opt.needC3;
@@ -553,13 +674,23 @@ export class TypeScriptSkillSolver implements ISkillSolver {
           }
 
           if (!group.isAcquiredGroup) {
-            finalRecommended.push({
+            const recommended: RecommendedSkill = {
               skill: chosen.skill,
               effectiveCost: chosen.actualCost,
               effectiveGrade: chosen.effectiveGrade,
               costPerformance: chosen.costPerformance,
               reason: this.formatRecommendationReason(chosen),
-            });
+            };
+            // 評価点モードでは追加キーを付けない（既存の戻り値と完全一致させる）
+            if (skillTestConfig) {
+              recommended.bonusPoints = chosen.bonusPoints;
+              recommended.scoreGain = chosen.scoreValue;
+            }
+            finalRecommended.push(recommended);
+          } else if (chosen.evoDetail) {
+            // 技能試験: 既取得グループの進化ぶんは推奨リストに載らないため、ここで Δボーナスを加算する
+            // （評価点モードでは bonusPoints === 0 のため既存の合計に影響しない）
+            acquiredEvolutionBonus += chosen.bonusPoints;
           }
 
           currSp -= chosen.dpCost;
@@ -596,6 +727,24 @@ export class TypeScriptSkillSolver implements ISkillSolver {
       aptitudes
     );
 
+    // 技能試験: DP で実際に進化が割り当てられた推奨だけにスコア増分を付与する
+    // （Δ評価点 × 課程倍率 + 進化後のボーナス − 進化元のボーナス）
+    if (skillTestConfig) {
+      for (const rec of evolutionRecommendations) {
+        const assigned = dpEvolutionAssignments.get(rec.baseSkillId);
+        if (!assigned || assigned.evoDetail.slotType !== rec.slotType) continue;
+
+        const baseMaster = this.masterStore.skillsById.get(rec.baseSkillId);
+        const baseRarity = baseMaster ? baseMaster.rarity : 1;
+        const bonusDelta =
+          bonusPointsOf(assigned.evoDetail.evolvedSkill.id, 6, skillTestConfig) -
+          bonusPointsOf(rec.baseSkillId, baseRarity, skillTestConfig);
+        rec.scoreDelta = Math.round(
+          courseMultiplier * assigned.evoDetail.evoDelta + bonusDelta
+        );
+      }
+    }
+
     // 既取得・選択中スキルの進化増分のみを加算（推奨スキルの進化増分は r.effectiveGrade に計上済みのため二重加算しない）
     let evolutionGradeBonus = 0;
     for (const assignment of dpEvolutionAssignments.values()) {
@@ -608,13 +757,35 @@ export class TypeScriptSkillSolver implements ISkillSolver {
     const skillsGain = finalRecommended.reduce((acc, r) => acc + r.effectiveGrade, 0);
     const totalAdditionalGrade = skillsGain + evolutionGradeBonus;
 
-    return {
+    // maxGradeValue / totalAdditionalGrade は評価点ベースのまま返す（UI 互換）
+    const result: SolverResult = {
       maxGradeValue: currentGradeSum + totalAdditionalGrade,
       totalAdditionalGrade,
       spentSp,
       remainingSp: Math.max(0, availableSp - spentSp),
       recommendedSkills: finalRecommended,
       evolutionRecommendations,
+    };
+
+    // 評価点モードは既存の戻り値と完全一致させる（追加フィールドを付けない）
+    if (!skillTestConfig) return result;
+
+    // 技能試験: スキル獲得ボーナス合計 = 既取得分 + 推奨分 + 既取得グループの進化分
+    const recommendedBonus = finalRecommended.reduce((acc, r) => acc + (r.bonusPoints ?? 0), 0);
+    const skillBonusTotal = acquiredSkillBonus + recommendedBonus + acquiredEvolutionBonus;
+    const gradeValue = courseMultiplier * result.maxGradeValue;
+
+    return {
+      ...result,
+      skillBonusTotal,
+      scoreBreakdown: {
+        gradeValue,
+        skillBonus: skillBonusTotal,
+        statBonus: 0,
+        raceBonus: 0,
+        scenarioBonus: 0,
+        total: gradeValue + skillBonusTotal,
+      },
     };
   }
 

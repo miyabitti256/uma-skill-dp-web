@@ -1,11 +1,18 @@
 import { useState, useMemo } from 'react';
-import { SolverResult, RecommendedSkill, EvolutionRecommendation } from '../types/solver.ts';
+import {
+  SolverResult,
+  SolverMode,
+  RecommendedSkill,
+  EvolutionRecommendation,
+} from '../types/solver.ts';
 import { Plus, Lock, Ban, ChevronRight, AlertCircle } from 'lucide-react';
 import { AnimatedNumber } from './AnimatedNumber.tsx';
 
 interface OptimizationPanelProps {
   solverResult: SolverResult | null;
   availableSp: number;
+  /** 最適化モード（'grade' = 評価点 / 'skillTest' = 技能試験）。スコア内訳は solverResult から読む */
+  mode: SolverMode;
   onApplySkill: (skillId: number) => void;
   onToggleLock: (skillId: number) => void;
   onToggleExclude: (skillId: number) => void;
@@ -13,6 +20,7 @@ interface OptimizationPanelProps {
 
 interface RecommendedSkillRowProps {
   item: RecommendedSkill;
+  mode: SolverMode;
   onApplySkill: (skillId: number) => void;
   onToggleLock: (skillId: number) => void;
   onToggleExclude: (skillId: number) => void;
@@ -20,11 +28,16 @@ interface RecommendedSkillRowProps {
 
 function RecommendedSkillRow({
   item,
+  mode,
   onApplySkill,
   onToggleLock,
   onToggleExclude,
 }: RecommendedSkillRowProps) {
   const { skill, effectiveCost, effectiveGrade, costPerformance } = item;
+  // 技能試験時はスコア増分を表示する（未計算時は評価点増分へフォールバック）
+  const isSkillTest = mode === 'skillTest';
+  const scoreGain = item.scoreGain ?? effectiveGrade;
+  const bonusPoints = item.bonusPoints ?? 0;
   const isGold = skill.rarity === 2;
   const isUnique = skill.rarity >= 3;
 
@@ -62,15 +75,33 @@ function RecommendedSkillRow({
             )}
           </div>
 
-          <div className="border-t border-[#5b4333]/15 mt-0.5 pt-0.5 flex items-center gap-2.5 text-[11px] text-[#7a6352] font-mono">
-            <span>
-              効果 <strong className="text-[#3c8604] font-black">+{effectiveGrade}</strong> pt
-            </span>
-            <span className="text-[#9e9aa6]">|</span>
-            <span>
-              効率 <strong className="text-[#0369a1] font-bold">{costPerformance}</strong> pt/SP
-            </span>
-          </div>
+          {isSkillTest ? (
+            <div className="border-t border-[#5b4333]/15 mt-0.5 pt-0.5 text-[11px] text-[#7a6352] font-mono">
+              <div className="flex items-center gap-2.5">
+                <span>
+                  効果 <strong className="text-[#3c8604] font-black">+{scoreGain}</strong> pt
+                </span>
+                <span className="text-[#9e9aa6]">|</span>
+                <span>
+                  効率 <strong className="text-[#0369a1] font-bold">{costPerformance}</strong>{' '}
+                  score/SP
+                </span>
+              </div>
+              <div className="text-[10px] text-[#9c8c7e] tabular-nums">
+                評価点 +{effectiveGrade} / ボーナス +{bonusPoints}
+              </div>
+            </div>
+          ) : (
+            <div className="border-t border-[#5b4333]/15 mt-0.5 pt-0.5 flex items-center gap-2.5 text-[11px] text-[#7a6352] font-mono">
+              <span>
+                効果 <strong className="text-[#3c8604] font-black">+{effectiveGrade}</strong> pt
+              </span>
+              <span className="text-[#9e9aa6]">|</span>
+              <span>
+                効率 <strong className="text-[#0369a1] font-bold">{costPerformance}</strong> pt/SP
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -120,6 +151,8 @@ function RecommendedSkillRow({
 }
 
 function EvolutionRow({ evo }: { evo: EvolutionRecommendation }) {
+  // 技能試験時は scoreDelta（評価点差分＋ボーナス差分）を優先表示する
+  const displayDelta = evo.scoreDelta ?? evo.evolvedSkill?.gradeValue;
   return (
     <div
       className={`px-2 py-1.5 rounded-md border text-xs flex items-center justify-between gap-2 ${
@@ -150,9 +183,9 @@ function EvolutionRow({ evo }: { evo: EvolutionRecommendation }) {
         </div>
       </div>
 
-      {evo.canEvolve && evo.evolvedSkill ? (
+      {evo.canEvolve && evo.evolvedSkill && displayDelta !== undefined ? (
         <span className="font-mono text-[11px] font-black text-[#be185d] bg-white px-1.5 py-0.5 rounded border border-[#f9a8d4] shrink-0">
-          +{evo.evolvedSkill.gradeValue} pt
+          +{displayDelta} pt
         </span>
       ) : (
         <AlertCircle className="w-3.5 h-3.5 text-[#9e9aa6] shrink-0" />
@@ -164,6 +197,7 @@ function EvolutionRow({ evo }: { evo: EvolutionRecommendation }) {
 export function OptimizationPanel({
   solverResult,
   availableSp,
+  mode,
   onApplySkill,
   onToggleLock,
   onToggleExclude,
@@ -198,6 +232,18 @@ export function OptimizationPanel({
 
   const gaugePercent = Math.min(100, availableSp > 0 ? (spentSp / availableSp) * 100 : 0);
 
+  const isSkillTest = mode === 'skillTest';
+  // 技能試験のスコア内訳（未計算時＝モード切替直後などは評価点ベースへフォールバック）
+  const scoreBreakdown = solverResult.scoreBreakdown;
+  const scoreTotal = scoreBreakdown ? scoreBreakdown.total : maxGradeValue;
+  const scoreGradeValue = scoreBreakdown ? scoreBreakdown.gradeValue : maxGradeValue;
+  const scoreSkillBonus = scoreBreakdown ? scoreBreakdown.skillBonus : 0;
+  // サブ表記: 推奨スキルによるスコア増分の合計
+  const recommendedScoreGain = recommendedSkills.reduce(
+    (acc, r) => acc + (r.scoreGain ?? 0),
+    0
+  );
+
   return (
     <div className="flex flex-col gap-2.5 h-full min-h-0">
       {/* 1. 評価点・SP集計サマリー */}
@@ -210,16 +256,30 @@ export function OptimizationPanel({
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <div>
               <span className="text-[11px] font-bold text-[#7f6958] block">
-                到達想定スキル評価点
+                {isSkillTest ? '到達想定スコア' : '到達想定スキル評価点'}
               </span>
               <div className="flex items-baseline gap-2">
-                <AnimatedNumber
-                  value={maxGradeValue}
-                  className="text-2xl font-black text-[#5b4333] font-mono tracking-tight tabular-nums"
-                />
-                <span className="text-xs font-black text-[#3c8604] font-mono tabular-nums">
-                  (+<AnimatedNumber value={totalAdditionalGrade} /> pt)
-                </span>
+                {isSkillTest ? (
+                  <>
+                    <AnimatedNumber
+                      value={scoreTotal}
+                      className="text-2xl font-black text-[#5b4333] font-mono tracking-tight tabular-nums"
+                    />
+                    <span className="text-xs font-black text-[#3c8604] font-mono tabular-nums">
+                      (+<AnimatedNumber value={recommendedScoreGain} /> pt)
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <AnimatedNumber
+                      value={maxGradeValue}
+                      className="text-2xl font-black text-[#5b4333] font-mono tracking-tight tabular-nums"
+                    />
+                    <span className="text-xs font-black text-[#3c8604] font-mono tabular-nums">
+                      (+<AnimatedNumber value={totalAdditionalGrade} /> pt)
+                    </span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -242,6 +302,17 @@ export function OptimizationPanel({
               style={{ width: `${gaugePercent}%` }}
             />
           </div>
+
+          {isSkillTest && (
+            <div className="mt-1.5">
+              <div className="text-[10px] font-bold text-[#7a6352] font-mono tabular-nums">
+                評価点 {scoreGradeValue} ／ スキル +{scoreSkillBonus}
+              </div>
+              <div className="text-[10px] text-[#9c8c7e] leading-tight">
+                ※スキル分のみ（基礎能力・レース・シナリオは含まない）
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -286,6 +357,7 @@ export function OptimizationPanel({
               <RecommendedSkillRow
                 key={item.skill.id}
                 item={item}
+                mode={mode}
                 onApplySkill={onApplySkill}
                 onToggleLock={onToggleLock}
                 onToggleExclude={onToggleExclude}
