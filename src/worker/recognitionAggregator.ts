@@ -41,6 +41,7 @@ export class RecognitionAggregator {
     {
       synthetic: boolean;
       stateCandidate?: { val: SkillState; count: number; lastFrame: number };
+      costCounts?: Map<number, number>;
     }
   >();
 
@@ -96,7 +97,12 @@ export class RecognitionAggregator {
   private unlockGoldCostsInGroup(groupId: number): void {
     for (const [id, skill] of this.accumulatedSkills) {
       if (skill.groupId === groupId && skill.rarity === 2) {
-        this.skillMeta.set(id, { ...this.skillMeta.get(id), synthetic: true });
+        const prev = this.skillMeta.get(id);
+        // Why: 兄弟スキルの状態変化で割引率が変わり得るため、旧コストの観測カウントを破棄して次回実観測を初回扱いにする
+        this.skillMeta.set(id, {
+          synthetic: true,
+          stateCandidate: prev?.stateCandidate,
+        });
       }
     }
   }
@@ -233,7 +239,6 @@ export class RecognitionAggregator {
         }
 
         const existing = this.accumulatedSkills.get(card.skillId);
-        const existingMeta = this.skillMeta.get(card.skillId);
 
         const baseCost = master ? master.needSkillPoint : card.needSp;
         const gradeValue = master ? master.gradeValue : 0;
@@ -252,13 +257,35 @@ export class RecognitionAggregator {
           this.unlockGoldCostsInGroup(groupId);
         }
 
-        // 全レアリティで確定コストをロック（直接未観測の合成◎およびシブリング状態変化時のみ更新許可）
+        // Why not 1st-frame lock: 出現時やトースト重畳時に 1〜2f だけ誤読されたSP値が永続ロックされる(Issue #6)ため、
+        // 有効コスト(needSp > 0)の観測回数で最頻値更新し、多数決(newCount > currentCount)で自動訂正する。
+        // Why not unconditional overwrite: 退出時の 1〜2f ブレで既存の多数観測コストが汚染されるのを防ぐため。
+        const existingMeta = this.skillMeta.get(card.skillId);
         const isSynthetic = existingMeta?.synthetic ?? false;
+        let nextCostCounts = existingMeta?.costCounts;
         let recognizedCost: number;
-        if (existing && !isSynthetic && (existing.recognizedCost > 0 || card.needSp === 0)) {
-          recognizedCost = existing.recognizedCost;
+        if (card.needSp > 0) {
+          if (!existing || isSynthetic || !nextCostCounts) {
+            nextCostCounts = new Map([[card.needSp, 1]]);
+            recognizedCost = card.needSp;
+          } else {
+            const newCount = (nextCostCounts.get(card.needSp) ?? 0) + 1;
+            const currentCount =
+              card.needSp === existing.recognizedCost
+                ? newCount
+                : (nextCostCounts.get(existing.recognizedCost) ?? 0);
+            if (newCount > currentCount) {
+              // Why reset defeated cost counts on winner switch: prevents an initial edge misread (e.g. 81 x2f)
+              // from accumulating with a trailing exit misread (81 x2f) to overturn a 3f clean center read (108).
+              nextCostCounts = new Map([[card.needSp, newCount]]);
+              recognizedCost = card.needSp;
+            } else {
+              nextCostCounts.set(card.needSp, newCount);
+              recognizedCost = existing.recognizedCost;
+            }
+          }
         } else {
-          recognizedCost = card.needSp > 0 ? card.needSp : existing ? existing.recognizedCost : baseCost;
+          recognizedCost = existing ? existing.recognizedCost : baseCost;
         }
 
         // ○ と ◎ の連動認識 & 自動同期 (◎を削除せず常に共存・同期)
@@ -304,7 +331,7 @@ export class RecognitionAggregator {
                     existingDouble.recognizedCost = doubleCost;
                   }
                   if (doubleMeta) {
-                    this.skillMeta.set(doubleSkill.id, { synthetic: doubleMeta.synthetic });
+                    this.skillMeta.set(doubleSkill.id, { ...doubleMeta, stateCandidate: undefined });
                   }
                   existingDouble.lastSeenTimestamp = Date.now();
                   this.skillsDirty = true;
@@ -357,7 +384,10 @@ export class RecognitionAggregator {
         }
 
         const canEvolve = Boolean(card.canEvolve || existing?.canEvolve);
-        const nextMeta = existingMeta ? { ...existingMeta, synthetic: false } : { synthetic: false };
+        const latestMeta = this.skillMeta.get(card.skillId);
+        const nextMeta = latestMeta
+          ? { ...latestMeta, synthetic: false, costCounts: nextCostCounts }
+          : { synthetic: false, costCounts: nextCostCounts };
         this.skillMeta.set(card.skillId, nextMeta);
 
         if (

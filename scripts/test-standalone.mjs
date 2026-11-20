@@ -1660,6 +1660,143 @@ describe('Succession Skill Evolutions (継承進化スキル)', () => {
   });
 });
 
+describe('Majority-Vote SP Cost Correction (Issue #6)', () => {
+  const masterData = JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'));
+  const masterStore = new MasterStore(masterData);
+
+  test('corrects initial 1-2 frame misread SP via majority vote and cascades to synthetic ◎', () => {
+    // What: 出現時の1〜2フレーム誤読SP(81)が後続3フレームの正常SP(108)で多数決により自動訂正され、
+    // ○の誤読SP訂正時に合成◎のコストも連動して再計算されること。
+    const agg = new RecognitionAggregator(masterStore);
+    const frame = (cards) => ({
+      screenType: 'スキル獲得説明省略表示',
+      screenMode: 'compact',
+      skillPoint: 1000,
+      skillPointValid: true,
+      cards: cards.map((c) => ({
+        dist: 10,
+        box: { top: 0, bottom: 90, height: 90 },
+        ...c,
+      })),
+    });
+
+    // 1. 直感力(204742): 初期2フレーム誤読(81) -> 後続3フレーム正常(108)
+    agg.processOutput(frame([{ skillId: 204742, name: '直感力', needSp: 81, state: 'unselected' }]));
+    let res = agg.processOutput(frame([{ skillId: 204742, name: '直感力', needSp: 81, state: 'unselected' }]));
+    assert.equal(res.detectedSkills.find((s) => s.id === 204742)?.recognizedCost, 81);
+
+    agg.processOutput(frame([{ skillId: 204742, name: '直感力', needSp: 108, state: 'unselected' }]));
+    res = agg.processOutput(frame([{ skillId: 204742, name: '直感力', needSp: 108, state: 'unselected' }]));
+    assert.equal(
+      res.detectedSkills.find((s) => s.id === 204742)?.recognizedCost,
+      81,
+      'Must not flip on 2 vs 2 tie'
+    );
+
+    res = agg.processOutput(frame([{ skillId: 204742, name: '直感力', needSp: 108, state: 'unselected' }]));
+    assert.equal(
+      res.detectedSkills.find((s) => s.id === 204742)?.recognizedCost,
+      108,
+      '3 frames of 108 must override 2 initial frames of 81'
+    );
+
+    // 2. 冬ウマ娘○(200202): 初期2フレーム誤読(54) -> 後続3フレーム正常(58)で合成◎(200201)も 66 -> 71 に連動訂正
+    agg.processOutput(frame([{ skillId: 200202, name: '冬ウマ娘○', needSp: 54, state: 'unselected' }]));
+    res = agg.processOutput(frame([{ skillId: 200202, name: '冬ウマ娘○', needSp: 54, state: 'unselected' }]));
+    assert.equal(res.detectedSkills.find((s) => s.id === 200202)?.recognizedCost, 54);
+    assert.equal(res.detectedSkills.find((s) => s.id === 200201)?.recognizedCost, Math.round(110 * (54 / 90)));
+
+    agg.processOutput(frame([{ skillId: 200202, name: '冬ウマ娘○', needSp: 58, state: 'unselected' }]));
+    agg.processOutput(frame([{ skillId: 200202, name: '冬ウマ娘○', needSp: 58, state: 'unselected' }]));
+    res = agg.processOutput(frame([{ skillId: 200202, name: '冬ウマ娘○', needSp: 58, state: 'unselected' }]));
+    assert.equal(res.detectedSkills.find((s) => s.id === 200202)?.recognizedCost, 58);
+    assert.equal(
+      res.detectedSkills.find((s) => s.id === 200201)?.recognizedCost,
+      Math.round(110 * (58 / 90)),
+      'Synthetic ◎ cost must cascade when ○ cost is corrected by majority vote'
+    );
+  });
+
+  test('protects established SP cost from trailing 1-2 frame exit misreads', () => {
+    // What: 正常SP(108)を3フレーム観測した後、スクロール退出時の1〜2フレームで誤読SP(81)が来ても汚染されないこと。
+    const agg = new RecognitionAggregator(masterStore);
+    const frame = (needSp) => ({
+      screenType: 'スキル獲得説明省略表示',
+      screenMode: 'compact',
+      skillPoint: 1000,
+      skillPointValid: true,
+      cards: [
+        {
+          skillId: 204742,
+          name: '直感力',
+          needSp,
+          state: 'unselected',
+          dist: 10,
+          box: { top: 0, bottom: 90, height: 90 },
+        },
+      ],
+    });
+
+    agg.processOutput(frame(108));
+    agg.processOutput(frame(108));
+    agg.processOutput(frame(108));
+    agg.processOutput(frame(81));
+    const res = agg.processOutput(frame(81));
+    assert.equal(
+      res.detectedSkills.find((s) => s.id === 204742)?.recognizedCost,
+      108,
+      '3 frames of 108 must remain protected against 2 trailing frames of 81'
+    );
+  });
+
+  test('unlocks gold skill costCounts on sibling state change and adopts new discounted cost immediately', () => {
+    // What: 下位○がunselected→selectedへ変化した際(unlockGoldCostsInGroup)、同一グループの金スキルの旧コスト観測回数がリセットされ、
+    // 新しい割引コストが即座に反映されること。
+    const agg = new RecognitionAggregator(masterStore);
+    const frame = (cards) => ({
+      screenType: 'スキル獲得説明省略表示',
+      screenMode: 'compact',
+      skillPoint: 1000,
+      skillPointValid: true,
+      cards: cards.map((c) => ({
+        dist: 10,
+        box: { top: 0, bottom: 90, height: 90 },
+        ...c,
+      })),
+    });
+
+    // 1. 中距離コーナー○(201112, unselected) + 光芒円刃(201113, needSp=250) を3フレーム観測
+    for (let i = 0; i < 3; i++) {
+      agg.processOutput(
+        frame([
+          { skillId: 201112, name: '中距離コーナー○', needSp: 100, state: 'unselected' },
+          { skillId: 201113, name: '光芒円刃', needSp: 250, state: 'unselected' },
+        ])
+      );
+    }
+
+    // 2. 中距離コーナー○ が selected に変化（2フレーム合意で unlockGoldCostsInGroup 発火）
+    agg.processOutput(frame([{ skillId: 201112, name: '中距離コーナー○', needSp: 0, state: 'selected' }]));
+    agg.processOutput(frame([{ skillId: 201112, name: '中距離コーナー○', needSp: 0, state: 'selected' }]));
+
+    // 3. 光芒円刃 が割引後の新コスト 150 で1フレーム観測されたら即座に 150 に更新されること
+    let res = agg.processOutput(
+      frame([{ skillId: 201113, name: '光芒円刃', needSp: 150, state: 'unselected' }])
+    );
+    assert.equal(
+      res.detectedSkills.find((s) => s.id === 201113)?.recognizedCost,
+      150,
+      'Gold skill must immediately adopt new discounted cost after sibling state unlock'
+    );
+
+    // 4. 新コスト150をさらに2フレーム観測(計3f)した後の退出1フレーム誤読(180)では汚染されないこと
+    agg.processOutput(frame([{ skillId: 201113, name: '光芒円刃', needSp: 150, state: 'unselected' }]));
+    agg.processOutput(frame([{ skillId: 201113, name: '光芒円刃', needSp: 150, state: 'unselected' }]));
+    res = agg.processOutput(frame([{ skillId: 201113, name: '光芒円刃', needSp: 180, state: 'unselected' }]));
+    assert.equal(res.detectedSkills.find((s) => s.id === 201113)?.recognizedCost, 150);
+  });
+});
+
 describe('Capture Resolution Warning Check (checkCaptureResolution)', () => {
   test('flags low-resolution portrait and landscape sizes while accepting recommended minimum and 0x0', () => {
     // What: Verifies portrait (>=380x670) and landscape (>=1000x560) thresholds against boundary sizes,

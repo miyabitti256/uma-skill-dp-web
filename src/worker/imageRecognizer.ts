@@ -1442,7 +1442,8 @@ export class ImageRecognizer {
       yScanEnd = Math.floor(950 * scaleH) + titlebarOffsetY;
       containerTop = Math.floor(380 * scaleH) + titlebarOffsetY;
       // Why not 940 for compact: 1080p compact lists sit under a bottom footer gradient above y≈845,
-      // which fades bottom strokes of '3' into '2'/'7' (max clean GT compact bottom is ~831*scaleH).
+      // which fades bottom strokes of '3' into '2'/'7' (max clean GT compact bottom is ~831*scaleH,
+      // and Video 4 f=460 clean card ends at y=841 <= 830+15=845).
       containerBottom = Math.floor((isCompact ? 830 : 940) * scaleH) + titlebarOffsetY;
     } else {
       const scaleW = w / 561.0;
@@ -1452,7 +1453,10 @@ export class ImageRecognizer {
       yScanStart = Math.floor(200 * scaleH) + titlebarOffsetY;
       yScanEnd = Math.floor(950 * scaleH) + titlebarOffsetY;
       containerTop = Math.floor(360 * scaleH) + titlebarOffsetY;
-      containerBottom = Math.floor(920 * scaleH) + titlebarOffsetY;
+      // Why not 920 for compact: portrait compact lists overlap bottom footer buttons and toast bars
+      // around y>=0.79*h (causing SP OCR fusion/truncation), whereas 745 (~0.775*h with margin)
+      // excludes those overlapped cards while keeping 100% skill recall on portrait compact videos.
+      containerBottom = Math.floor((isCompact ? 745 : 920) * scaleH) + titlebarOffsetY;
     }
 
     const cw = cRight - cLeft;
@@ -1840,15 +1844,40 @@ export class ImageRecognizer {
 
     const ccs = connectedComponentsWithStats(binInv, cutX, roiH);
     const maxWidth = Math.max(20, Math.floor(cw * 0.032));
-    const validCcs = ccs.filter(
+    // Why shape/edge guards: SP digits 0-9 are vertical glyphs (w <= 1.15*h); wider blobs are
+    // horizontal toast/divider bars, and thin right-edge lines touching cutX in compact mode
+    // are the dark left border of the [+] button rather than a digit '1'.
+    const candidateCcs = ccs.filter(
       (c) =>
         c.area >= 8 &&
         c.height >= 6 &&
         c.width >= 3 &&
         c.width <= maxWidth &&
+        c.width <= c.height * 1.15 &&
         c.left > 3 &&
-        c.height / c.width <= 3.2
+        c.height / c.width <= 3.2 &&
+        !(isCompact && c.left + c.width >= cutX - 1 && c.width <= Math.max(3, Math.ceil(c.height * 0.25)))
     );
+
+    if (candidateCcs.length === 0) {
+      return { needSp: 0, state: 'acquired', valid: false };
+    }
+
+    const maxDigitH = Math.max(...candidateCcs.map((c) => c.height));
+    const mainCcs = candidateCcs.filter((c) => c.height >= maxDigitH * 0.7);
+    const avgCy = mainCcs.reduce((sum, c) => sum + c.top + c.height / 2, 0) / mainCcs.length;
+
+    // Why reject inline truncated fragments instead of dropping them: a faded/clipped partial digit
+    // (e.g. half of '8') sitting along the digit baseline would otherwise turn '108' into '10'.
+    const hasInlineTruncated = candidateCcs.some(
+      (c) => c.height < maxDigitH * 0.65 && Math.abs(c.top + c.height / 2 - avgCy) <= maxDigitH * 0.45
+    );
+    if (hasInlineTruncated) {
+      return { needSp: 0, state: 'unselected', valid: false };
+    }
+
+    // Drop vertically misaligned edge noise blobs outside the digit line.
+    const validCcs = mainCcs.filter((c) => Math.abs(c.top + c.height / 2 - avgCy) <= maxDigitH * 0.35);
 
     validCcs.sort((a, b) => a.left - b.left);
     if (validCcs.length === 0 || validCcs.length > 4) {
