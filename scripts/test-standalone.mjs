@@ -10,6 +10,7 @@ import { mergeRecognizedSkills } from '../src/worker/skillMerge.ts';
 import { RecognitionWorkerPool, determineWorkerPoolSize } from '../src/worker/recognitionWorkerPool.ts';
 import { CaptureManager, checkCaptureResolution } from '../src/capture/captureManager.ts';
 import { TypeScriptSkillSolver } from '../src/solver/skillSolver.ts';
+import { SkillTestStore } from '../src/data/skillTestStore.ts';
 import { MasterStore } from '../src/data/masterStore.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1984,6 +1985,459 @@ describe('Aptitude Conditions from master.mdb tag_id (PR #7 Root Fix)', () => {
     assert.equal(
       solver.solve([innateOwned], { availableSp: 0, aptitudes: allG, lockedSkillIds: [], excludedSkillIds: [] }).maxGradeValue,
       340
+    );
+  });
+});
+
+describe('Skill Test Mode (技能試験スコア最大化)', () => {
+  const masterData = JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'));
+  const masterStore = new MasterStore(masterData);
+  const skillTestStore = new SkillTestStore(
+    JSON.parse(fs.readFileSync(resolveDataFile('skill_test_courses.json'), 'utf8'))
+  );
+  // フリー課程の解決済み設定（課程倍率 1.0 / 全スキーがボーナス対象）
+  const freeConfig = skillTestStore.getSolveConfig('2026-10', 'free');
+  const defaultAptitudes = {
+    turf: 'A',
+    dirt: 'G',
+    short: 'A',
+    mile: 'A',
+    middle: 'A',
+    long: 'A',
+    nige: 'A',
+    senkou: 'A',
+    sashi: 'A',
+    oikomi: 'A',
+  };
+
+  // 既存のソルバテストと同じ形で、マスタ値から DetectedSkillItem を組み立てる
+  function makeDetectedSkill(skillId, overrides = {}) {
+    const m = masterStore.skillsById.get(skillId);
+    assert.ok(m, `Master skill ${skillId} must exist`);
+    return {
+      id: m.id,
+      name: m.name,
+      recognizedCost: overrides.recognizedCost ?? m.needSkillPoint,
+      baseCost: m.needSkillPoint,
+      gradeValue: m.gradeValue,
+      rarity: m.rarity,
+      groupId: m.groupId,
+      groupRate: m.groupRate,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve: false,
+      lastSeenTimestamp: 0,
+      ...overrides,
+    };
+  }
+
+  // マスタに存在しない検証用スキル（評価点モードとの比較など、入力を作りたい場合に使う）
+  function makeMockSkill(id, overrides = {}) {
+    return {
+      id,
+      name: `テスト用スキル${id}`,
+      recognizedCost: 100,
+      baseCost: 100,
+      gradeValue: 200,
+      rarity: 1,
+      groupId: id,
+      groupRate: 1,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve: false,
+      lastSeenTimestamp: 0,
+      ...overrides,
+    };
+  }
+
+  // 評価点モード（mode 未指定）で解く
+  function solveGrade(skills, availableSp, options = {}) {
+    return new TypeScriptSkillSolver(masterStore).solve(skills, {
+      availableSp,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      ...options,
+    });
+  }
+
+  // 技能試験モード（フリー課程）で解く
+  function solveSkillTest(skills, availableSp, options = {}) {
+    return new TypeScriptSkillSolver(masterStore).solve(skills, {
+      availableSp,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'skillTest',
+      skillTest: freeConfig,
+      ...options,
+    });
+  }
+
+  // 実データから実効評価点の期待値を組み立てる（既存テストと同じ計算関数を再利用）
+  function effectiveGradeOf(skillId) {
+    const m = masterStore.skillsById.get(skillId);
+    assert.ok(m, `Master skill ${skillId} must exist`);
+    return calculateEffectiveGradeValue(m.gradeValue, m.distanceTypes, m.runningStyles, defaultAptitudes);
+  }
+
+  test('T1: テンポアップ（id 200722, 基礎217, sp160）は 239 + 400 = 639、効率 3.99', () => {
+    // 期待値の根拠: 実データ 200722 = gradeValue 217 / needSkillPoint 160 / distanceTypes [3](中距離)。
+    // 中距離A = 1.1倍 -> Math.round(217 × 1.1) = 239。白(rarity 1)ボーナス 400。
+    const tempo = masterStore.skillsById.get(200722);
+    assert.ok(tempo);
+    assert.equal(tempo.gradeValue, 217);
+    assert.equal(tempo.needSkillPoint, 160);
+    assert.equal(effectiveGradeOf(200722), 239);
+
+    // フリー課程の設定自体も実データから確認する
+    assert.equal(freeConfig.courseMultiplier, 1.0);
+    assert.equal(freeConfig.bonusSkillIds, null);
+    assert.deepEqual(freeConfig.skillBonus, { normal: 400, rare: 1200, evolved: 1500 });
+
+    const res = solveSkillTest([makeDetectedSkill(200722)], tempo.needSkillPoint);
+    assert.equal(res.recommendedSkills.length, 1);
+    const rec = res.recommendedSkills[0];
+    assert.equal(rec.skill.id, 200722);
+    assert.equal(rec.effectiveGrade, 239);
+    assert.equal(rec.bonusPoints, 400);
+    assert.equal(rec.scoreGain, 639);
+    assert.equal(rec.costPerformance, 3.99, '639 / 160 = 3.99375 -> 小数2桁で 3.99');
+    assert.equal(res.maxGradeValue, 239, 'maxGradeValue は評価点のまま（互換維持）');
+    assert.equal(res.skillBonusTotal, 400);
+    assert.equal(res.scoreBreakdown.total, 639);
+  });
+
+  test('T2: 右回り○（id 200012, 基礎129, 適性条件なし）は 129 + 400 = 529', () => {
+    // 期待値の根拠: 実データ 200012 = gradeValue 129 / needSkillPoint 90 / 適性条件なし。
+    // 倍率 1.0 のまま 129、白ボーナス 400。
+    const right = masterStore.skillsById.get(200012);
+    assert.ok(right);
+    assert.deepEqual(right.distanceTypes, []);
+    assert.deepEqual(right.runningStyles, []);
+    assert.equal(effectiveGradeOf(200012), 129);
+
+    const res = solveSkillTest([makeDetectedSkill(200012)], right.needSkillPoint);
+    const rec = res.recommendedSkills[0];
+    assert.equal(rec.effectiveGrade, 129);
+    assert.equal(rec.bonusPoints, 400);
+    assert.equal(rec.scoreGain, 529);
+    assert.equal(rec.costPerformance, 5.88, '529 / 90 = 5.8777... -> 5.88');
+    assert.equal(res.skillBonusTotal, 400);
+    assert.equal(res.scoreBreakdown.total, 529);
+  });
+
+  test('T3: rarity6（基礎240）は適性1.1倍で 264 + 1500 = 1764（継承進化も補完後は 1764）', () => {
+    // 期待値の根拠（公開値の検証）: rarity 6 の進化スキル = 1,500 ボーナス。
+    // 基礎 240 に距離適性 A(1.1) が乗ると Math.round(240 × 1.1) = 264 -> 264 + 1500 = 1764。
+    // 実データの継承進化スキル（91101351 等）は distanceTypes が空で適性が乗らないため、
+    // 「適性条件を持つ rarity 6 マスタ（407021: マイル/中距離、内部 gradeValue 633）」に
+    // 基礎 240 を当てて、この 264 を実データの適性テーブルから再現する。
+    const evoMaster = masterStore.skillsById.get(407021);
+    assert.ok(evoMaster);
+    assert.equal(evoMaster.rarity, 6);
+    assert.ok(evoMaster.distanceTypes.length > 0, '407021 は距離適性条件を持つ');
+    const expectedGrade = calculateEffectiveGradeValue(
+      240,
+      evoMaster.distanceTypes,
+      evoMaster.runningStyles,
+      defaultAptitudes
+    );
+    assert.equal(expectedGrade, 264);
+
+    const res = solveSkillTest([makeDetectedSkill(407021, { recognizedCost: 100, gradeValue: 240 })], 100);
+    const rec = res.recommendedSkills[0];
+    assert.equal(rec.effectiveGrade, 264);
+    assert.equal(rec.bonusPoints, 1500, 'rarity 6 は進化ボーナス 1,500');
+    assert.equal(rec.scoreGain, 1764);
+    assert.equal(res.skillBonusTotal, 1500);
+    assert.equal(res.scoreBreakdown.total, 1764);
+
+    // 実データの継承進化（黄金を訪ねて 901351 -> 91101351）は説明文にのみ ＜差し/追込＞ を持つ。
+    // マスタ側の runningStyles [3,4] により、適性 A で 1.1 倍になる。
+    // 継承固有 180 -> 198、継承進化 240 -> 264（いずれも +1,500 ボーナス）。
+    const succEvolved = masterStore.skillsById.get(91101351);
+    assert.ok(succEvolved);
+    assert.equal(succEvolved.rarity, 6);
+    assert.deepEqual(succEvolved.distanceTypes, [], '距離条件は持たない');
+    assert.deepEqual(succEvolved.runningStyles, [3, 4], '説明文の ＜差し/追込＞ が補完される');
+    assert.equal(effectiveGradeOf(91101351), 264);
+
+    const resSucc = solveSkillTest([makeDetectedSkill(901351, { recognizedCost: 200, canEvolve: true })], 200, {
+      selectedCardId: 100101,
+    });
+    const succRec = resSucc.recommendedSkills[0];
+    assert.equal(succRec.skill.id, 901351);
+    assert.equal(succRec.effectiveGrade, 264);
+    assert.equal(succRec.bonusPoints, 1500);
+    assert.equal(succRec.scoreGain, 1764);
+    assert.equal(resSucc.skillBonusTotal, 1500);
+    const succEvo = resSucc.evolutionRecommendations.find((e) => e.slotType === 'succession');
+    assert.ok(succEvo && succEvo.canEvolve, '継承進化が推奨されること');
+    // Δ評価点 66（198 -> 264）+ Δボーナス 1,100（継承固有 400 -> 進化 1,500）= 1,166
+    assert.equal(succEvo.scoreDelta, 66 + 1100);
+  });
+
+  test('T4: ○→◎（同一系統・どちらも白）は Δボーナス 0、◎ のコストは ○ のコスト + ◎ のコスト', () => {
+    // 実データ: 中距離直線○ 201102（217/SP100）と 中距離直線◎ 201101（262/SP110）は同一 groupId 20110・どちらも rarity 1。
+    const circle = masterStore.skillsById.get(201102);
+    const double = masterStore.skillsById.get(201101);
+    assert.ok(circle && double);
+    assert.equal(circle.groupId, double.groupId);
+    assert.equal(circle.rarity, 1);
+    assert.equal(double.rarity, 1);
+
+    // 1. ○ だけのとき: 239 + 400 = 639
+    const resCircle = solveSkillTest([makeDetectedSkill(201102)], circle.needSkillPoint);
+    assert.equal(resCircle.recommendedSkills[0].skill.id, 201102);
+    assert.equal(resCircle.recommendedSkills[0].effectiveGrade, 239);
+    assert.equal(resCircle.skillBonusTotal, 400);
+
+    // 2. ○ も未取得候補にある状態で ◎ を取ると、コストは ○ + ◎、ボーナスは 400 のまま（Δ = 0）
+    const costDouble = circle.needSkillPoint + double.needSkillPoint;
+    const resDouble = solveSkillTest(
+      [makeDetectedSkill(201102), makeDetectedSkill(201101)],
+      costDouble
+    );
+    const recDouble = resDouble.recommendedSkills[0];
+    assert.equal(recDouble.skill.id, 201101);
+    assert.equal(recDouble.effectiveCost, costDouble, '◎ の取得コストは ○ のコスト + ◎ のコスト');
+    assert.equal(recDouble.effectiveGrade, 288);
+    assert.equal(recDouble.bonusPoints, 400, '同一系統の白→白なのでボーナスは増えない');
+    assert.equal(recDouble.scoreGain, 688);
+    assert.equal(resDouble.skillBonusTotal, 400);
+    assert.equal(resDouble.skillBonusTotal - resCircle.skillBonusTotal, 0, 'Δボーナスは 0');
+  });
+
+  test('T5: 白→金（同一系統: 軽い足取り→意気衝天）は Δボーナス +800', () => {
+    // 実データ: 軽い足取り 202042（白 217/SP160）と 意気衝天 202041（金 508/SP160）は同一 groupId 20204。
+    const white = masterStore.skillsById.get(202042);
+    const gold = masterStore.skillsById.get(202041);
+    assert.ok(white && gold);
+    assert.equal(white.groupId, gold.groupId);
+    assert.equal(white.rarity, 1);
+    assert.equal(gold.rarity, 2);
+
+    const resWhite = solveSkillTest([makeDetectedSkill(202042)], white.needSkillPoint);
+    assert.equal(resWhite.recommendedSkills[0].skill.id, 202042);
+    assert.equal(resWhite.skillBonusTotal, 400);
+
+    const resBoth = solveSkillTest(
+      [makeDetectedSkill(202042), makeDetectedSkill(202041)],
+      gold.needSkillPoint
+    );
+    const rec = resBoth.recommendedSkills[0];
+    assert.equal(rec.skill.id, 202041);
+    assert.equal(rec.effectiveGrade, 559);
+    assert.equal(rec.bonusPoints, 1200, '金(rarity 2) のボーナスは 1,200');
+    assert.equal(rec.scoreGain, 1759);
+    assert.equal(rec.costPerformance, 10.99, '1759 / 160 = 10.99375 -> 10.99');
+    assert.equal(resBoth.skillBonusTotal - resWhite.skillBonusTotal, 800, '白 400 -> 金 1,200 の差分 +800');
+  });
+
+  test('T6a: 既取得の金を進化させると Δボーナス +300（1,200 -> 1,500）', () => {
+    // 実データ: 全身全霊 200511（金 508）は cardId 100101 の覚醒Lv5 で「夢叶える末脚」100101211（633）へ進化する。
+    const goldMaster = masterStore.skillsById.get(200511);
+    assert.ok(goldMaster);
+    const goldEff = effectiveGradeOf(200511);
+    assert.equal(goldEff, 508);
+
+    const lv5Entry = masterStore.charaEvolutionsByCardId.get(100101).find((e) => e.slotRank === 5 && e.baseSkillId === 200511);
+    assert.ok(lv5Entry, 'cardId 100101 の Lv5 進化対象に 200511 があること');
+    const evoEff = effectiveGradeOf(lv5Entry.evolvedSkillId);
+    assert.equal(evoEff, 633);
+
+    const res = solveSkillTest([makeDetectedSkill(200511, { recognizedCost: 0, state: 'acquired' })], 0, {
+      selectedCardId: 100101,
+    });
+    assert.deepEqual(res.recommendedSkills, [], '取得済みなので推奨リストには載らない');
+    assert.equal(res.totalAdditionalGrade, evoEff - goldEff, '進化ぶんの評価点増分 125 のみ');
+    assert.equal(res.maxGradeValue, evoEff);
+    assert.equal(res.skillBonusTotal, 1200 + 300, '既取得の金 1,200 + 進化差分 300 = 1,500');
+    assert.equal(res.scoreBreakdown.total, evoEff + 1500);
+    const lv5 = res.evolutionRecommendations.find((e) => e.slotType === 'chara_lv5');
+    assert.ok(lv5 && lv5.canEvolve);
+    assert.equal(lv5.scoreDelta, evoEff - goldEff + 300, '進化のスコア増分は Δ評価点 + Δボーナス 300');
+  });
+
+  test('T6b: 未取得の金に進化を割り当てると系統の基準ボーナス 0 から +1500', () => {
+    // 期待値の根拠: 未取得の金は基準ボーナスが 0 なので、進化オプションの Δボーナスは 1,500 - 0 = 1,500。
+    const res = solveSkillTest([makeDetectedSkill(200511, { recognizedCost: 200 })], 200, {
+      selectedCardId: 100101,
+    });
+    const rec = res.recommendedSkills[0];
+    assert.equal(rec.skill.id, 200511);
+    assert.equal(rec.effectiveGrade, 633);
+    assert.equal(rec.bonusPoints, 1500);
+    assert.equal(rec.scoreGain, 2133);
+    assert.equal(res.maxGradeValue, 633);
+    assert.equal(res.skillBonusTotal, 1500);
+    assert.equal(res.scoreBreakdown.total, 2133);
+  });
+
+  test('T7: 固有（rarity 3..5）とデバフはスキル獲得ボーナス 0', () => {
+    // 実データ: 波乱注意砲！10071 は rarity 3 の固有スキル。取得済みでも加点されない。
+    const unique = masterStore.skillsById.get(10071);
+    assert.ok(unique);
+    assert.equal(unique.rarity, 3);
+    const resUniqueAcquired = solveSkillTest(
+      [makeDetectedSkill(10071, { recognizedCost: 0, state: 'acquired' })],
+      0
+    );
+    assert.equal(resUniqueAcquired.maxGradeValue, effectiveGradeOf(10071));
+    assert.equal(resUniqueAcquired.skillBonusTotal, 0);
+    assert.equal(resUniqueAcquired.scoreBreakdown.total, resUniqueAcquired.maxGradeValue);
+
+    // rarity 4 / 5 も候補としては選べるがボーナスは 0
+    const resUniques = solveSkillTest(
+      [
+        makeMockSkill(993004, { rarity: 4, gradeValue: 300 }),
+        makeMockSkill(993005, { rarity: 5, gradeValue: 300 }),
+      ],
+      200
+    );
+    assert.equal(resUniques.recommendedSkills.length, 2);
+    for (const rec of resUniques.recommendedSkills) {
+      assert.equal(rec.bonusPoints, 0);
+      assert.equal(rec.scoreGain, 300);
+    }
+    assert.equal(resUniques.skillBonusTotal, 0);
+
+    // 実データのデバフ（右回り× 200013: rarity 1 / groupRate -1 / gradeValue -129）は候補から除外され加点もされない
+    const debuff = masterStore.skillsById.get(200013);
+    assert.ok(debuff);
+    assert.ok(debuff.groupRate <= 0);
+    const resDebuffOnly = solveSkillTest([makeDetectedSkill(200013)], 200);
+    assert.deepEqual(resDebuffOnly.recommendedSkills, []);
+    assert.equal(resDebuffOnly.skillBonusTotal, 0);
+
+    const resDebuffWithWhite = solveSkillTest([makeDetectedSkill(200013), makeDetectedSkill(200012)], 200);
+    assert.deepEqual(
+      resDebuffWithWhite.recommendedSkills.map((r) => r.skill.id),
+      [200012]
+    );
+    assert.equal(resDebuffWithWhite.skillBonusTotal, 400, 'デバフぶんが加点されて 800 になってはいけない');
+  });
+
+  test("T8: 'grade' モード回帰（同一入力で maxGradeValue 633、スコア関連フィールドは付かない）", () => {
+    // 既存テスト「TypeScriptSkillSolver 12-State Evolution DP」と同じ入力・同じ期待値（633）。
+    const input = [
+      makeDetectedSkill(200511, { recognizedCost: 200 }),
+      makeMockSkill(990001, { gradeValue: 280 }),
+      makeMockSkill(990002, { gradeValue: 280 }),
+    ];
+    const options = {
+      availableSp: 200,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    };
+    const solver = new TypeScriptSkillSolver(masterStore);
+
+    const resDefault = solver.solve(input, options);
+    assert.equal(resDefault.maxGradeValue, 633);
+    assert.equal(resDefault.totalAdditionalGrade, 633);
+    assert.deepEqual(resDefault.recommendedSkills.map((r) => r.skill.id), [200511]);
+    assert.equal(
+      resDefault.recommendedSkills[0].costPerformance,
+      Number((633 / 200).toFixed(2)),
+      '評価点モードの効率は 評価点 / SP'
+    );
+    assert.equal('scoreBreakdown' in resDefault, false);
+    assert.equal('skillBonusTotal' in resDefault, false);
+    assert.equal(resDefault.recommendedSkills[0].bonusPoints, undefined);
+    assert.equal(resDefault.recommendedSkills[0].scoreGain, undefined);
+    const lv5Default = resDefault.evolutionRecommendations.find((e) => e.slotType === 'chara_lv5');
+    assert.ok(lv5Default);
+    assert.equal(lv5Default.scoreDelta, undefined);
+
+    // mode: 'grade' を明示しても同じ
+    const resExplicit = solver.solve(input, { ...options, mode: 'grade' });
+    assert.equal(resExplicit.maxGradeValue, 633);
+    assert.equal('scoreBreakdown' in resExplicit, false);
+
+    // mode: 'skillTest' でも skillTest 設定が無ければ評価点モードへフォールバックする（設計書 §4.6）
+    const resFallback = solver.solve(input, { ...options, mode: 'skillTest' });
+    assert.equal(resFallback.maxGradeValue, 633);
+    assert.equal('scoreBreakdown' in resFallback, false);
+    assert.equal(resFallback.recommendedSkills[0].bonusPoints, undefined);
+  });
+
+  test('T9: scoreBreakdown の整合性（total === gradeValue + skillBonus）', () => {
+    const cases = [
+      { label: '白スキル1枚', skills: [makeDetectedSkill(200722)], sp: 160, options: {} },
+      { label: '金スキル1枚', skills: [makeDetectedSkill(202041)], sp: 160, options: {} },
+      {
+        label: '既取得の金 + 進化',
+        skills: [makeDetectedSkill(200511, { recognizedCost: 0, state: 'acquired' })],
+        sp: 0,
+        options: { selectedCardId: 100101 },
+      },
+    ];
+
+    for (const c of cases) {
+      const res = solveSkillTest(c.skills, c.sp, c.options);
+      const breakdown = res.scoreBreakdown;
+      assert.ok(breakdown, `${c.label}: scoreBreakdown が付くこと`);
+      assert.equal(breakdown.gradeValue, 1.0 * res.maxGradeValue, `${c.label}: 課程倍率1.0の評価点`);
+      assert.equal(breakdown.skillBonus, res.skillBonusTotal, `${c.label}: skillBonus は skillBonusTotal と一致`);
+      assert.equal(breakdown.statBonus, 0);
+      assert.equal(breakdown.raceBonus, 0);
+      assert.equal(breakdown.scenarioBonus, 0);
+      assert.equal(breakdown.total, breakdown.gradeValue + breakdown.skillBonus, `${c.label}: total の恒等式`);
+      for (const rec of res.recommendedSkills) {
+        assert.equal(rec.scoreGain, rec.effectiveGrade + rec.bonusPoints, `${c.label}: スコア増分の内訳`);
+      }
+    }
+  });
+
+  test('T10: 技能試験モードの最適解は評価点モードと異なる（安い白2枚が選ばれスコアが高くなる）', () => {
+    // 評価点では負けるが、白ボーナス +400 が2枚付く安いスキルの方がスコアは高くなる構成。
+    const cheap1 = makeMockSkill(993001, { recognizedCost: 100, gradeValue: 140 });
+    const cheap2 = makeMockSkill(993002, { recognizedCost: 100, gradeValue: 140 });
+    const expensive = makeMockSkill(993003, { recognizedCost: 200, gradeValue: 300 });
+    const input = [cheap1, cheap2, expensive];
+
+    // 評価点モード: 300pt の1枚が最適（140 + 140 = 280 < 300）
+    const gradeRes = solveGrade(input, 200);
+    assert.deepEqual(gradeRes.recommendedSkills.map((r) => r.skill.id), [993003]);
+    assert.equal(gradeRes.maxGradeValue, 300);
+
+    // 技能試験モード: 140+400=540 を2枚 = 1,080 が 300+400=700 を上回る
+    const testRes = solveSkillTest(input, 200);
+    assert.deepEqual(
+      testRes.recommendedSkills.map((r) => r.skill.id).sort((a, b) => a - b),
+      [993001, 993002]
+    );
+    assert.equal(testRes.maxGradeValue, 280, '評価点では評価点モードより低い');
+    assert.ok(testRes.maxGradeValue < gradeRes.maxGradeValue);
+    assert.equal(testRes.skillBonusTotal, 800, '白 400 × 2');
+    assert.equal(testRes.scoreBreakdown.total, 1080);
+    assert.ok(testRes.scoreBreakdown.total > gradeRes.maxGradeValue);
+    for (const rec of testRes.recommendedSkills) {
+      assert.equal(rec.bonusPoints, 400);
+      assert.equal(rec.scoreGain, 540);
+      assert.equal(rec.costPerformance, 5.4, '技能試験の効率は スコア / SP');
+    }
+  });
+
+  test('T11: 取得済みのマイナス効果（紫）スキルにはスキル獲得ボーナスが付かない', () => {
+    // 200013 右回り×（rarity 1 / groupRate -1 / gradeValue -129）を取得済みとして渡す。
+    // 紫スキルは仕様上ボーナス対象外なので、+400 が付いてはいけない。
+    const debuff = makeDetectedSkill(200013, { state: 'acquired' });
+    assert.ok(debuff.groupRate <= 0, '紫スキルは groupRate <= 0');
+    assert.ok(debuff.gradeValue <= 0, '紫スキルは gradeValue <= 0');
+
+    const res = solveSkillTest([debuff], 500);
+    assert.equal(res.skillBonusTotal, 0, '紫スキルは加点対象外');
+    assert.equal(res.scoreBreakdown.skillBonus, 0);
+    assert.equal(
+      res.scoreBreakdown.total,
+      res.scoreBreakdown.gradeValue,
+      'ボーナス0なのでスコアは評価点のみ'
     );
   });
 });

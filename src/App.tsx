@@ -1,5 +1,4 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { AlertTriangle } from 'lucide-react';
 import { HeaderBar } from './components/HeaderBar.tsx';
 import { ConditionPanel } from './components/ConditionPanel.tsx';
 import { OptimizationPanel } from './components/OptimizationPanel.tsx';
@@ -9,11 +8,8 @@ import { UsageModal } from './components/UsageModal.tsx';
 import { BugReportModal } from './components/BugReportModal.tsx';
 
 import { MasterStore } from './data/masterStore.ts';
-import {
-  CaptureManager,
-  CaptureSourceType,
-  checkCaptureResolution,
-} from './capture/captureManager.ts';
+import { SkillTestStore } from './data/skillTestStore.ts';
+import { CaptureManager, CaptureSourceType } from './capture/captureManager.ts';
 import { SkillSolverAdapter } from './solver/solverAdapter.ts';
 import { RecognitionWorkerPool } from './worker/recognitionWorkerPool.ts';
 import { mergeRecognizedSkills } from './worker/skillMerge.ts';
@@ -25,7 +21,7 @@ import {
   SkillState,
 } from './types/recognition.ts';
 import { PlayableCardItem, ScenarioItem } from './types/master.ts';
-import { SolverResult } from './types/solver.ts';
+import { SolverResult, SolverOptions, SolverMode } from './types/solver.ts';
 import { MainToWorkerMessage, WorkerToMainMessage } from './types/worker.ts';
 
 // デフォルト適性: すべて G
@@ -79,7 +75,6 @@ function App() {
 
   // キャプチャ & パフォーマンス
   const [captureSource, setCaptureSource] = useState<CaptureSourceType>('idle');
-  const [captureSize, setCaptureSize] = useState<{ width: number; height: number } | null>(null);
   const [screenMode, setScreenMode] = useState<ScreenMode>('idle');
   const [fps, setFps] = useState(0);
   const [latencyMs, setLatencyMs] = useState(0);
@@ -100,6 +95,10 @@ function App() {
   const [skills, setSkills] = useState<DetectedSkillItem[]>([]);
   const [solverResult, setSolverResult] = useState<SolverResult | null>(null);
 
+  // 最適化モード（既定: 評価点）と技能試験の課程（v1 はフリー課程のみ）
+  const [solverMode, setSolverMode] = useState<SolverMode>('grade');
+  const [skillTestEditionId, setSkillTestEditionId] = useState<string>('');
+
   // 参照オブジェクト（レンダー中の読み書き禁止）
   const workerRef = useRef<RecognitionWorkerPool | null>(null);
   const captureManagerRef = useRef<CaptureManager | null>(null);
@@ -108,7 +107,6 @@ function App() {
   const latencySumRef = useRef(0);
   const lastFpsCalcRef = useRef(0);
   const frameSeqRef = useRef(0);
-  const lastCaptureSizeRef = useRef<{ width: number; height: number } | null>(null);
   const lastDetectedSkillsRef = useRef<DetectedSkillItem[] | null>(null);
 
   // 1. 初期ロード (マスタデータ)
@@ -127,6 +125,19 @@ function App() {
       })
       .catch((err) => {
         console.error('Failed to load master data:', err);
+      });
+
+    // 技能試験の課程データ（失敗しても評価点モードは動き続けるため致命的にしない）
+    SkillTestStore.getInstance()
+      .load('/data/skill_test_courses.json')
+      .then((data) => {
+        const firstEdition = data.editions[0];
+        if (firstEdition) {
+          setSkillTestEditionId(firstEdition.id);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load skill test courses:', err);
       });
   }, []);
 
@@ -209,15 +220,6 @@ function App() {
 
     const capture = new CaptureManager({
       onFrameCaptured: (bitmap: ImageBitmap, timestamp: number) => {
-        // postMessage の transfer 前にサイズを取得し、解像度変化時のみ state を更新して 60fps 毎の不要な再レンダーを防ぐ
-        const w = bitmap.width;
-        const h = bitmap.height;
-        const prevSize = lastCaptureSizeRef.current;
-        if (!prevSize || prevSize.width !== w || prevSize.height !== h) {
-          const nextSize = { width: w, height: h };
-          lastCaptureSizeRef.current = nextSize;
-          setCaptureSize(nextSize);
-        }
         const frameMsg: MainToWorkerMessage = {
           type: 'frame',
           seq: ++frameSeqRef.current,
@@ -230,8 +232,6 @@ function App() {
       onSourceChanged: (source: CaptureSourceType) => {
         setCaptureSource(source);
         if (source === 'idle') {
-          lastCaptureSizeRef.current = null;
-          setCaptureSize(null);
           setScreenMode('idle');
           setFps(0);
           setLatencyMs(0);
@@ -284,15 +284,26 @@ function App() {
       const lockedIds = effectiveSkills.filter((s) => s.isLocked).map((s) => s.id);
       const excludedIds = effectiveSkills.filter((s) => s.isExcluded).map((s) => s.id);
 
+      const options: SolverOptions = {
+        availableSp,
+        aptitudes,
+        selectedCardId,
+        selectedScenarioId,
+        lockedSkillIds: lockedIds,
+        excludedSkillIds: excludedIds,
+        mode: solverMode,
+      };
+
+      // 技能試験時のみ、フリー課程のスコア設定を渡す（評価点モードは既存と完全同一のパス）
+      if (solverMode === 'skillTest') {
+        options.skillTest = SkillTestStore.getInstance().getSolveConfig(
+          skillTestEditionId,
+          'free'
+        );
+      }
+
       solverAdapterRef.current
-        .solve(effectiveSkills, {
-          availableSp,
-          aptitudes,
-          selectedCardId,
-          selectedScenarioId,
-          lockedSkillIds: lockedIds,
-          excludedSkillIds: excludedIds,
-        })
+        .solve(effectiveSkills, options)
         .then((res) => {
           setSolverResult(res);
         })
@@ -302,7 +313,15 @@ function App() {
     }, 60);
 
     return () => window.clearTimeout(timerId);
-  }, [effectiveSkills, availableSp, aptitudes, selectedCardId, selectedScenarioId]);
+  }, [
+    effectiveSkills,
+    availableSp,
+    aptitudes,
+    selectedCardId,
+    selectedScenarioId,
+    solverMode,
+    skillTestEditionId,
+  ]);
 
   // 操作ハンドラ
   const handleStartLive = useCallback(async () => {
@@ -408,12 +427,6 @@ function App() {
     setActiveModal(null);
   }, []);
 
-  const resolutionCheck = useMemo(
-    () => (captureSize ? checkCaptureResolution(captureSize.width, captureSize.height) : null),
-    [captureSize]
-  );
-
-  // 1. ヘッダー操作バー (タイトルなし)
   return (
     <div className="flex flex-col min-h-screen lg:h-screen text-[#5b4333]">
       {/* 1. ヘッダー操作バー (タイトルなし) */}
@@ -445,20 +458,13 @@ function App() {
         </div>
       )}
 
-      {captureSource !== 'idle' && resolutionCheck?.isLowResolution && (
-        <div className="bg-[#fffbeb] border-b border-[#fcd34d] px-3 py-1.5 text-xs text-[#92400e] flex items-center gap-2 font-bold">
-          <AlertTriangle className="w-4 h-4 shrink-0 text-[#d97706]" aria-hidden="true" />
-          <span>
-            {`ウィンドウが小さいため認識精度が低下する恐れがあります（現在: ${resolutionCheck.width}×${resolutionCheck.height}px / 推奨: ${resolutionCheck.recommendedWidth}×${resolutionCheck.recommendedHeight}px 以上）`}
-          </span>
-        </div>
-      )}
-
       {/* メインワークスペース: 左サイドバー(条件・プレビュー) + 右2ペイン(推奨・認識済) */}
       <main className="flex-1 p-2.5 flex flex-col lg:flex-row gap-2.5 max-w-[1440px] mx-auto w-full min-h-0">
         {/* 左サイドバー: 育成条件 & ミニプレビュー */}
         <aside className="w-full lg:w-[330px] xl:w-[350px] shrink-0 flex flex-col gap-2.5 lg:overflow-y-auto">
           <ConditionPanel
+            mode={solverMode}
+            onModeChange={setSolverMode}
             availableSp={availableSp}
             onSpChange={setAvailableSp}
             isSpAutoDetected={isSpAutoDetected}
@@ -489,6 +495,7 @@ function App() {
           <OptimizationPanel
             solverResult={solverResult}
             availableSp={availableSp}
+            mode={solverMode}
             onApplySkill={handleApplySkill}
             onToggleLock={handleToggleLock}
             onToggleExclude={handleToggleExclude}

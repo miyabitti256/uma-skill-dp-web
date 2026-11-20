@@ -1,8 +1,13 @@
 import { useState, useMemo } from 'react';
 import { AptitudeState, AptitudeRank } from '../types/recognition.ts';
 import { PlayableCardItem, ScenarioItem } from '../types/master.ts';
+import { SolverMode } from '../types/solver.ts';
 
 interface ConditionPanelProps {
+  /** 最適化モード（'grade' = 評価点 / 'skillTest' = 技能試験） */
+  mode: SolverMode;
+  onModeChange: (mode: SolverMode) => void;
+
   availableSp: number;
   onSpChange: (sp: number) => void;
   isSpAutoDetected?: boolean;
@@ -66,6 +71,8 @@ const RANK_BADGE_STYLES: Record<AptitudeRank, string> = {
 };
 
 export function ConditionPanel({
+  mode,
+  onModeChange,
   availableSp,
   onSpChange,
   isSpAutoDetected,
@@ -101,6 +108,38 @@ export function ConditionPanel({
 
   return (
     <section className="uma-window overflow-hidden text-xs">
+      {/* 0. 最適化モード切替 (評価点 / 技能試験) */}
+      <div className="uma-bar px-3 py-1 flex items-center justify-between">
+        <span className="font-extrabold text-xs">最適化モード</span>
+      </div>
+
+      <div className="p-2.5 bg-white border-b border-[#d6d3dc]">
+        <div className="grid grid-cols-2 gap-1 bg-[#f4f3f1] border border-[#d6d3dc] rounded p-0.5">
+          <button
+            onClick={() => onModeChange('grade')}
+            aria-pressed={mode === 'grade'}
+            className={`px-2 py-1 rounded text-[11px] font-bold transition ${
+              mode === 'grade'
+                ? 'bg-[#56b308] text-white'
+                : 'text-[#6b5342] hover:text-[#5b4333]'
+            }`}
+          >
+            評価点
+          </button>
+          <button
+            onClick={() => onModeChange('skillTest')}
+            aria-pressed={mode === 'skillTest'}
+            className={`px-2 py-1 rounded text-[11px] font-bold transition ${
+              mode === 'skillTest'
+                ? 'bg-[#56b308] text-white'
+                : 'text-[#6b5342] hover:text-[#5b4333]'
+            }`}
+          >
+            技能試験
+          </button>
+        </div>
+      </div>
+
       {/* 1. 現在のスキルPt (実機スキル獲得上部パネル準拠) */}
       <div className="uma-bar px-3 py-1 flex items-center justify-between">
         <span className="font-extrabold text-xs">現在のスキルPt</span>
