@@ -507,7 +507,7 @@ export class ImageRecognizer {
     string,
     {
       fullBytes: Uint8Array;
-      result: { skillId: number; name: string; rarity: number; dist: number };
+      result: { skillId: number; name: string; rarity: number; dist: number; canFallbackRetry?: boolean };
     }
   >();
   private shibaTmplCache = new Map<number, number[][]>();
@@ -1921,6 +1921,75 @@ export class ImageRecognizer {
     cardState: 'unselected' | 'selected' | 'acquired' = isUnselected ? 'unselected' : 'acquired',
     isRainbowCard: boolean = cardState === 'acquired'
   ): { skillId: number; name: string; rarity: number; dist: number } {
+    const primaryThresh = isUnselected
+      ? cw < 450
+        ? 160
+        : isCompact || isGoldCard
+          ? 155
+          : 140
+      : 115;
+    const primary = this.matchCardSkillNameWithThresh(
+      cardData,
+      cw,
+      ch,
+      isCompact,
+      needSp,
+      isUnselected,
+      isGoldCard,
+      cardState,
+      isRainbowCard,
+      primaryThresh
+    );
+    // Why not uniform 155 or retrying XOR-rejected frames: uniform 155 shifts 1px crop bounds on clear
+    // frames (e.g. 京都レース場○) and flips ambiguous scroll-blur XOR ties (春ウマ娘○ -> 夏ウマ娘○).
+    // Retrying with 155 only when 140 fails before/at maxDist recovers 1080p subpixel stroke dropouts
+    // (危険回避/直滑降/揺るがぬ信念/右回り○) with zero FP regressions.
+    if (
+      primary.canFallbackRetry &&
+      !isCompact &&
+      isUnselected &&
+      !isGoldCard &&
+      cw >= 450
+    ) {
+      const retry = this.matchCardSkillNameWithThresh(
+        cardData,
+        cw,
+        ch,
+        isCompact,
+        needSp,
+        isUnselected,
+        isGoldCard,
+        cardState,
+        isRainbowCard,
+        155
+      );
+      return {
+        skillId: retry.skillId,
+        name: retry.name,
+        rarity: retry.rarity,
+        dist: retry.dist,
+      };
+    }
+    return {
+      skillId: primary.skillId,
+      name: primary.name,
+      rarity: primary.rarity,
+      dist: primary.dist,
+    };
+  }
+
+  private matchCardSkillNameWithThresh(
+    cardData: Uint8Array,
+    cw: number,
+    ch: number,
+    isCompact: boolean,
+    needSp: number,
+    isUnselected: boolean,
+    isGoldCard: boolean,
+    cardState: 'unselected' | 'selected' | 'acquired',
+    isRainbowCard: boolean,
+    binThresh: number
+  ): { skillId: number; name: string; rarity: number; dist: number; canFallbackRetry?: boolean } {
     let ty1: number;
     let ty2: number;
     if (isCompact) {
@@ -1936,13 +2005,6 @@ export class ImageRecognizer {
     const stripW = tx2 - tx1;
     const stripH = ty2 - ty1;
     if (stripW <= 0 || stripH <= 0) return { skillId: 0, name: 'Unknown', rarity: 0, dist: 9999 };
-
-    let binThresh: number;
-    if (isUnselected) {
-      binThresh = cw < 450 ? 160 : isCompact || isGoldCard ? 155 : 140;
-    } else {
-      binThresh = 115;
-    }
     const binClean = new Uint8Array(stripW * stripH);
     for (let y = 0; y < stripH; y++) {
       const rowOffset = (ty1 + y) * cw;
@@ -1989,7 +2051,7 @@ export class ImageRecognizer {
         break;
       }
     }
-    if (firstCol === -1) return { skillId: 0, name: 'Unknown', rarity: 0, dist: 9999 };
+    if (firstCol === -1) return { skillId: 0, name: 'Unknown', rarity: 0, dist: 9999, canFallbackRetry: true };
 
     let lastCol = firstCol;
     // Why 0.75 * stripH: 読点・スペースを含む長いスキル名 (例: 恩返し、召し上がれ) の 24px 空白で途中で切れないようにする
@@ -2022,14 +2084,14 @@ export class ImageRecognizer {
         lastRow = y;
       }
     }
-    if (firstRow === -1) return { skillId: 0, name: 'Unknown', rarity: 0, dist: 9999 };
+    if (firstRow === -1) return { skillId: 0, name: 'Unknown', rarity: 0, dist: 9999, canFallbackRetry: true };
 
     const cropH = lastRow - firstRow + 1;
     const cropW = patchW;
     const minExpectedH = Math.max(8, Math.floor(ch * 0.08));
     const maxExpectedH = Math.floor(ch * 0.35);
     if (cropH < minExpectedH || cropH > maxExpectedH || cropW < 18) {
-      return { skillId: 0, name: 'Unknown', rarity: 0, dist: 9999 };
+      return { skillId: 0, name: 'Unknown', rarity: 0, dist: 9999, canFallbackRetry: true };
     }
 
     const cropPatch = new Uint8Array(cropW * cropH);
@@ -2229,7 +2291,13 @@ export class ImageRecognizer {
     const headVariants16 = headVariants.map(toUint16View);
     const tailVariants16 = tailVariants.map(toUint16View);
 
-    const storeCache = (res: { skillId: number; name: string; rarity: number; dist: number }) => {
+    const storeCache = (res: {
+      skillId: number;
+      name: string;
+      rarity: number;
+      dist: number;
+      canFallbackRetry?: boolean;
+    }) => {
       if (this.cardNameCache.size >= 64) {
         const oldestKey = this.cardNameCache.keys().next().value;
         if (oldestKey !== undefined) this.cardNameCache.delete(oldestKey);
@@ -2470,7 +2538,7 @@ export class ImageRecognizer {
     const baseMaxDist = cw < 450 ? 285 : isGoldCard ? 275 : isGoldOrSpecial ? 240 : 205;
     const maxDist = isUnselected ? baseMaxDist : baseMaxDist + 40;
     if (bestDist > maxDist) {
-      return storeCache(UNKNOWN);
+      return storeCache({ ...UNKNOWN, canFallbackRetry: true });
     }
 
     // Pairwise XOR Disambiguation (同族スキルファミリ検証 & 1位・2位競合の差分ビット支持度検証)

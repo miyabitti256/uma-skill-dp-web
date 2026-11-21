@@ -25,7 +25,7 @@ import {
   SkillState,
 } from './types/recognition.ts';
 import { PlayableCardItem, ScenarioItem } from './types/master.ts';
-import { SolverResult } from './types/solver.ts';
+import { SolverResult, SolverMode } from './types/solver.ts';
 import { MainToWorkerMessage, WorkerToMainMessage } from './types/worker.ts';
 
 // デフォルト適性: すべて G
@@ -97,6 +97,7 @@ function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // スキル & ソルバー
+  const [solverMode, setSolverMode] = useState<SolverMode>('grade');
   const [skills, setSkills] = useState<DetectedSkillItem[]>([]);
   const [solverResult, setSolverResult] = useState<SolverResult | null>(null);
 
@@ -292,6 +293,7 @@ function App() {
           selectedScenarioId,
           lockedSkillIds: lockedIds,
           excludedSkillIds: excludedIds,
+          mode: solverMode,
         })
         .then((res) => {
           setSolverResult(res);
@@ -302,7 +304,7 @@ function App() {
     }, 60);
 
     return () => window.clearTimeout(timerId);
-  }, [effectiveSkills, availableSp, aptitudes, selectedCardId, selectedScenarioId]);
+  }, [effectiveSkills, availableSp, aptitudes, selectedCardId, selectedScenarioId, solverMode]);
 
   // 操作ハンドラ
   const handleStartLive = useCallback(async () => {
@@ -459,6 +461,8 @@ function App() {
         {/* 左サイドバー: 育成条件 & ミニプレビュー */}
         <aside className="w-full lg:w-[330px] xl:w-[350px] shrink-0 flex flex-col gap-2.5 lg:overflow-y-auto">
           <ConditionPanel
+            mode={solverMode}
+            onModeChange={setSolverMode}
             availableSp={availableSp}
             onSpChange={setAvailableSp}
             isSpAutoDetected={isSpAutoDetected}
@@ -487,6 +491,7 @@ function App() {
         {/* 右メインエリア: 左=最適推奨 / 右=認識済みスキル一覧 */}
         <div className="flex-1 min-w-0 grid grid-cols-1 xl:grid-cols-2 gap-2.5 min-h-0">
           <OptimizationPanel
+            mode={solverMode}
             solverResult={solverResult}
             availableSp={availableSp}
             onApplySkill={handleApplySkill}

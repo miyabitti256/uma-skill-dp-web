@@ -99,6 +99,25 @@ function calculateEffectiveGradeValue(
   return Math.round(gradeValue * rDist * rStyle);
 }
 
+export const SKILL_TEST_BONUS = {
+  normal: 400,
+  rare: 1200,
+  evolved: 1500,
+} as const;
+
+function isInnateUniqueSkill(master: SkillMasterItem | undefined, skill: DetectedSkillItem): boolean {
+  const rarity = master ? master.rarity : skill.rarity;
+  const needSp = master ? master.needSkillPoint : skill.baseCost;
+  return rarity >= 3 && rarity <= 5 && needSp === 0;
+}
+
+function tierBonus(rarity: number): number {
+  if (rarity === 1) return SKILL_TEST_BONUS.normal;
+  if (rarity === 2) return SKILL_TEST_BONUS.rare;
+  if (rarity === 6) return SKILL_TEST_BONUS.evolved;
+  return 0;
+}
+
 interface EvoOptionDetail {
   slotType: 'chara_lv3' | 'chara_lv5' | 'scenario' | 'succession';
   evolvedSkill: SkillMasterItem;
@@ -112,6 +131,8 @@ interface DpOption {
   actualCost: number;
   dpCost: number;
   effectiveGrade: number;
+  bonusPoints: number;
+  scoreValue: number;
   costPerformance: number;
   isLocked: boolean;
   needC3: 0 | 1;
@@ -140,6 +161,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
 
   public solve(skills: DetectedSkillItem[], options: SolverOptions): SolverResult {
     const { availableSp, aptitudes, selectedCardId, selectedScenarioId } = options;
+    const isSkillTest = options.mode === 'skillTest';
     const excludedSet = new Set(options.excludedSkillIds ?? []);
     const lockedSet = new Set(options.lockedSkillIds ?? []);
 
@@ -181,8 +203,17 @@ export class TypeScriptSkillSolver implements ISkillSolver {
     }
 
     let currentGradeSum = 0;
+    let acquiredSkillBonus = 0;
     for (const entry of acquiredOrSelectedByGroup.values()) {
-      currentGradeSum += entry.effectiveGrade;
+      const master = this.masterStore.skillsById.get(entry.skill.id);
+      // Why exclude body innate uniques: fixed Lv*170 innate unique grades belong to the separate
+      // unique skill category in-game, not 到達想定スキル評価点.
+      if (!isInnateUniqueSkill(master, entry.skill)) {
+        currentGradeSum += entry.effectiveGrade;
+      }
+      if (isSkillTest && entry.skill.groupRate > 0 && entry.skill.gradeValue > 0) {
+        acquiredSkillBonus += tierBonus(entry.skill.rarity);
+      }
     }
 
     // candidateSkills の中に同グループの groupRate === 1 (○) があるか
@@ -251,20 +282,38 @@ export class TypeScriptSkillSolver implements ISkillSolver {
 
       const isLocked = skill.isLocked || lockedSet.has(skill.id);
       const skillOptions: DpOption[] = [];
+      const baseGroupBonus =
+        isSkillTest &&
+        acquiredLower &&
+        acquiredLower.skill.groupRate > 0 &&
+        acquiredLower.skill.gradeValue > 0
+          ? tierBonus(acquiredLower.skill.rarity)
+          : 0;
+
+      const calcOptionValues = (optionEffectiveGrade: number, hasEvo: boolean) => {
+        const bonusPoints = isSkillTest
+          ? (hasEvo ? SKILL_TEST_BONUS.evolved : tierBonus(skill.rarity)) - baseGroupBonus
+          : 0;
+        const scoreValue = isSkillTest ? optionEffectiveGrade + bonusPoints : optionEffectiveGrade;
+        return { bonusPoints, scoreValue };
+      };
 
       const pushOption = (
-        effectiveGrade: number,
+        optionEffectiveGrade: number,
         needC3: 0 | 1,
         needC5: 0 | 1,
         needSc: 0 | 1,
         evoDetail?: EvoOptionDetail
       ): void => {
+        const { bonusPoints, scoreValue } = calcOptionValues(optionEffectiveGrade, Boolean(evoDetail));
         skillOptions.push({
           skill,
           actualCost: cost,
           dpCost: isLocked ? 0 : cost,
-          effectiveGrade,
-          costPerformance: cost > 0 ? Number((effectiveGrade / cost).toFixed(2)) : 999,
+          effectiveGrade: optionEffectiveGrade,
+          bonusPoints,
+          scoreValue,
+          costPerformance: cost > 0 ? Number((scoreValue / cost).toFixed(2)) : 999,
           isLocked,
           needC3,
           needC5,
@@ -273,20 +322,28 @@ export class TypeScriptSkillSolver implements ISkillSolver {
         });
       };
 
+      const baseValues = calcOptionValues(baseGain, false);
       const successionEvoDetail =
         skill.rarity === 1 && skill.canEvolve
-          ? this.collectSuccessionEvolutionDetail(skill.id, effGrade, selectedCardId, aptitudes)
+          ? this.collectSuccessionEvolutionDetail(
+              skill.id,
+              effGrade,
+              selectedCardId,
+              aptitudes,
+              isSkillTest
+            )
           : undefined;
 
       if (successionEvoDetail) {
         const evoGain = Math.max(0, successionEvoDetail.evoEff - baseGroupEff);
-        if (evoGain > baseGain || (isLocked && evoGain > 0)) {
+        const evoValues = calcOptionValues(evoGain, true);
+        if (evoValues.scoreValue > baseValues.scoreValue || (isLocked && evoValues.scoreValue > 0)) {
           pushOption(evoGain, 0, 0, 0, successionEvoDetail);
-        } else if (isLocked || baseGain > 0) {
+        } else if (isLocked || baseValues.scoreValue > 0) {
           pushOption(baseGain, 0, 0, 0);
         }
       } else {
-        if (isLocked || baseGain > 0) {
+        if (isLocked || baseValues.scoreValue > 0) {
           pushOption(baseGain, 0, 0, 0);
         }
 
@@ -297,11 +354,13 @@ export class TypeScriptSkillSolver implements ISkillSolver {
             selectedCardId,
             selectedScenarioId,
             maxScen,
-            aptitudes
+            aptitudes,
+            isSkillTest
           );
           for (const evoDetail of evoDetails) {
             const evoGain = Math.max(0, evoDetail.evoEff - baseGroupEff);
-            if (evoGain > baseGain || (isLocked && evoGain > 0)) {
+            const evoValues = calcOptionValues(evoGain, true);
+            if (evoValues.scoreValue > baseValues.scoreValue || (isLocked && evoValues.scoreValue > 0)) {
               pushOption(
                 evoGain,
                 evoDetail.slotType === 'chara_lv3' ? 1 : 0,
@@ -362,10 +421,13 @@ export class TypeScriptSkillSolver implements ISkillSolver {
           entry.skill.id,
           entry.effectiveGrade,
           selectedCardId,
-          aptitudes
+          aptitudes,
+          isSkillTest
         );
         if (!succDetail) continue;
 
+        const bonusPoints = isSkillTest ? SKILL_TEST_BONUS.evolved - SKILL_TEST_BONUS.normal : 0;
+        const scoreValue = isSkillTest ? succDetail.evoDelta + bonusPoints : succDetail.evoDelta;
         dpGroups.push({
           canSkip: false,
           isAcquiredGroup: true,
@@ -375,6 +437,8 @@ export class TypeScriptSkillSolver implements ISkillSolver {
               actualCost: 0,
               dpCost: 0,
               effectiveGrade: succDetail.evoDelta,
+              bonusPoints,
+              scoreValue,
               costPerformance: 999,
               isLocked: false,
               needC3: 0,
@@ -394,22 +458,29 @@ export class TypeScriptSkillSolver implements ISkillSolver {
         selectedCardId,
         selectedScenarioId,
         maxScen,
-        aptitudes
+        aptitudes,
+        isSkillTest
       );
       if (evoDetails.length === 0) continue;
 
-      const acquiredOptions: DpOption[] = evoDetails.map((evoDetail) => ({
-        skill: entry.skill,
-        actualCost: 0,
-        dpCost: 0,
-        effectiveGrade: evoDetail.evoDelta,
-        costPerformance: 999,
-        isLocked: false,
-        needC3: evoDetail.slotType === 'chara_lv3' ? 1 : 0,
-        needC5: evoDetail.slotType === 'chara_lv5' ? 1 : 0,
-        needSc: evoDetail.slotType === 'scenario' ? 1 : 0,
-        evoDetail,
-      }));
+      const acquiredOptions: DpOption[] = evoDetails.map((evoDetail) => {
+        const bonusPoints = isSkillTest ? SKILL_TEST_BONUS.evolved - SKILL_TEST_BONUS.rare : 0;
+        const scoreValue = isSkillTest ? evoDetail.evoDelta + bonusPoints : evoDetail.evoDelta;
+        return {
+          skill: entry.skill,
+          actualCost: 0,
+          dpCost: 0,
+          effectiveGrade: evoDetail.evoDelta,
+          bonusPoints,
+          scoreValue,
+          costPerformance: 999,
+          isLocked: false,
+          needC3: evoDetail.slotType === 'chara_lv3' ? 1 : 0,
+          needC5: evoDetail.slotType === 'chara_lv5' ? 1 : 0,
+          needSc: evoDetail.slotType === 'scenario' ? 1 : 0,
+          evoDetail,
+        };
+      });
       dpGroups.push({
         canSkip: true,
         isAcquiredGroup: true,
@@ -420,6 +491,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
     // 4. 進化前提 12状態DP (c3 ∈ {0,1} × c5 ∈ {0,1} × sc ∈ {0..maxScen}) による最適化
     const finalRecommended: RecommendedSkill[] = [];
     const dpEvolutionAssignments = new Map<number, DpEvolutionAssignment>();
+    let acquiredEvolutionBonus = 0;
 
     if (dpGroups.length > 0) {
       // Why not cap at 5000: modern scenarios reach 8000+ SP, and bounding by totalPossibleSp avoids wasted DP work on low skill counts
@@ -471,7 +543,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
           const opt = group.options[optIdx];
           const cost = opt.dpCost;
           if (cost > maxSp) continue;
-          const gain = opt.effectiveGrade;
+          const gain = opt.scoreValue;
 
           for (let c3 = opt.needC3; c3 <= 1; c3++) {
             const prevC3 = c3 - opt.needC3;
@@ -553,13 +625,20 @@ export class TypeScriptSkillSolver implements ISkillSolver {
           }
 
           if (!group.isAcquiredGroup) {
-            finalRecommended.push({
+            const rec: RecommendedSkill = {
               skill: chosen.skill,
               effectiveCost: chosen.actualCost,
               effectiveGrade: chosen.effectiveGrade,
               costPerformance: chosen.costPerformance,
               reason: this.formatRecommendationReason(chosen),
-            });
+            };
+            if (isSkillTest) {
+              rec.bonusPoints = chosen.bonusPoints;
+              rec.scoreGain = chosen.scoreValue;
+            }
+            finalRecommended.push(rec);
+          } else if (isSkillTest && chosen.evoDetail) {
+            acquiredEvolutionBonus += chosen.bonusPoints;
           }
 
           currSp -= chosen.dpCost;
@@ -596,6 +675,18 @@ export class TypeScriptSkillSolver implements ISkillSolver {
       aptitudes
     );
 
+    if (isSkillTest) {
+      for (const rec of evolutionRecommendations) {
+        if (!rec.canEvolve) continue;
+        const assigned = dpEvolutionAssignments.get(rec.baseSkillId);
+        if (!assigned || assigned.evoDetail.slotType !== rec.slotType) continue;
+        const baseMaster = this.masterStore.skillsById.get(rec.baseSkillId);
+        const baseRarity = baseMaster ? baseMaster.rarity : rec.slotType === 'succession' ? 1 : 2;
+        rec.scoreDelta =
+          assigned.evoDetail.evoDelta + (SKILL_TEST_BONUS.evolved - tierBonus(baseRarity));
+      }
+    }
+
     // 既取得・選択中スキルの進化増分のみを加算（推奨スキルの進化増分は r.effectiveGrade に計上済みのため二重加算しない）
     let evolutionGradeBonus = 0;
     for (const assignment of dpEvolutionAssignments.values()) {
@@ -607,15 +698,29 @@ export class TypeScriptSkillSolver implements ISkillSolver {
     const spentSp = finalRecommended.reduce((acc, r) => acc + r.effectiveCost, 0);
     const skillsGain = finalRecommended.reduce((acc, r) => acc + r.effectiveGrade, 0);
     const totalAdditionalGrade = skillsGain + evolutionGradeBonus;
+    const maxGradeValue = currentGradeSum + totalAdditionalGrade;
 
-    return {
-      maxGradeValue: currentGradeSum + totalAdditionalGrade,
+    const result: SolverResult = {
+      maxGradeValue,
       totalAdditionalGrade,
       spentSp,
       remainingSp: Math.max(0, availableSp - spentSp),
       recommendedSkills: finalRecommended,
       evolutionRecommendations,
     };
+
+    if (isSkillTest) {
+      const recommendedBonus = finalRecommended.reduce((acc, r) => acc + (r.bonusPoints ?? 0), 0);
+      const skillBonusTotal = acquiredSkillBonus + recommendedBonus + acquiredEvolutionBonus;
+      result.skillBonusTotal = skillBonusTotal;
+      result.scoreBreakdown = {
+        gradeValue: maxGradeValue,
+        skillBonus: skillBonusTotal,
+        total: maxGradeValue + skillBonusTotal,
+      };
+    }
+
+    return result;
   }
 
   private formatRecommendationReason(option: DpOption): string | undefined {
@@ -660,14 +765,16 @@ export class TypeScriptSkillSolver implements ISkillSolver {
     skillId: number,
     baseEff: number,
     cardId: number | undefined,
-    aptitudes: AptitudeState
+    aptitudes: AptitudeState,
+    isSkillTest = false
   ): EvoOptionDetail | undefined {
     const succEvos = this.masterStore.successionEvolutionsByBaseSkillId.get(skillId);
     if (!succEvos || succEvos.length === 0) return undefined;
 
+    const bonusDelta = isSkillTest ? SKILL_TEST_BONUS.evolved - SKILL_TEST_BONUS.normal : 0;
     let bestEvo: SkillMasterItem | undefined;
     let bestEvoEff = 0;
-    let bestDelta = 0;
+    let bestDelta = -bonusDelta;
 
     for (const evoItem of succEvos) {
       if (cardId !== undefined && cardId > 0 && evoItem.cardId === cardId) continue;
@@ -704,9 +811,11 @@ export class TypeScriptSkillSolver implements ISkillSolver {
     cardId: number | undefined,
     scenarioId: number | undefined,
     maxScen: number,
-    aptitudes: AptitudeState
+    aptitudes: AptitudeState,
+    isSkillTest = false
   ): EvoOptionDetail[] {
     const details: EvoOptionDetail[] = [];
+    const bonusDelta = isSkillTest ? SKILL_TEST_BONUS.evolved - SKILL_TEST_BONUS.rare : 0;
 
     if (cardId) {
       const charaEvos = this.masterStore.charaEvolutionsByCardId.get(cardId) || [];
@@ -715,7 +824,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
         if (evosForRank.length === 0) continue;
 
         const best = this.findBestCharaEvolution(evosForRank, goldEff, aptitudes);
-        if (best && best.gain > 0) {
+        if (best && best.gain + bonusDelta > 0) {
           details.push({
             slotType: rank === 3 ? 'chara_lv3' : 'chara_lv5',
             evolvedSkill: best.evolvedSkill,
@@ -740,7 +849,7 @@ export class TypeScriptSkillSolver implements ISkillSolver {
             aptitudes
           );
           const gain = evoEff - goldEff;
-          if (gain > 0) {
+          if (gain + bonusDelta > 0) {
             details.push({
               slotType: 'scenario',
               evolvedSkill,

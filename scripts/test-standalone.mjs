@@ -1959,7 +1959,7 @@ describe('Aptitude Conditions from master.mdb tag_id (PR #7 Root Fix)', () => {
     }
 
     // Body-text normal skills 204293 (○: 217 * 1.1 = 239) & 204292 (◎: 262 * 1.1 = 288, +49 delta)
-    // and innate unique 101351 (340 fixed)
+    // and innate unique 101351 (excluded from reachable skill evaluation score -> 0)
     const res204293 = solver.solve([makeCandidate(204293, 100, false)], {
       availableSp: 100,
       aptitudes: allA,
@@ -1979,11 +1979,294 @@ describe('Aptitude Conditions from master.mdb tag_id (PR #7 Root Fix)', () => {
     const innateOwned = { ...makeCandidate(101351, 0, false), state: 'acquired' };
     assert.equal(
       solver.solve([innateOwned], { availableSp: 0, aptitudes: allA, lockedSkillIds: [], excludedSkillIds: [] }).maxGradeValue,
-      340
+      0
     );
     assert.equal(
       solver.solve([innateOwned], { availableSp: 0, aptitudes: allG, lockedSkillIds: [], excludedSkillIds: [] }).maxGradeValue,
-      340
+      0
     );
+  });
+});
+
+describe('Innate Unique Exclusion (PR #9)', () => {
+  const masterData = JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'));
+  const masterStore = new MasterStore(masterData);
+  const solver = new TypeScriptSkillSolver(masterStore);
+  const defaultAptitudes = {
+    turf: 'A',
+    dirt: 'G',
+    short: 'A',
+    mile: 'A',
+    middle: 'A',
+    long: 'A',
+    nige: 'A',
+    senkou: 'A',
+    sashi: 'A',
+    oikomi: 'A',
+  };
+
+  function makeSkill(skillId, overrides = {}) {
+    const m = masterStore.skillsById.get(skillId);
+    assert.ok(m, `Master skill ${skillId} must exist`);
+    return {
+      id: m.id,
+      name: m.name,
+      recognizedCost: overrides.recognizedCost ?? m.needSkillPoint,
+      baseCost: m.needSkillPoint,
+      gradeValue: m.gradeValue,
+      rarity: m.rarity,
+      groupId: m.groupId,
+      groupRate: m.groupRate,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve: false,
+      lastSeenTimestamp: 0,
+      ...overrides,
+    };
+  }
+
+  test('excludes body innate uniques (rarity 3..5 / SP 0) from 到達想定スキル評価点', () => {
+    // What: Verifies PR #9 behavior: acquired body innate unique (101351, rarity=5, SP=0) contributes 0 to
+    // maxGradeValue, normal skills (200012=129pt) still sum accurately alongside it, and acquired inherited
+    // unique (900011, rarity=1, SP=200) still contributes 180pt.
+    const innate101351 = makeSkill(101351, { recognizedCost: 0, state: 'acquired' });
+    const resOnlyInnate = solver.solve([innate101351], {
+      availableSp: 0,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resOnlyInnate.maxGradeValue, 0);
+
+    const migiMaru = makeSkill(200012, { recognizedCost: 90, state: 'unselected' });
+    const resWithNormal = solver.solve([innate101351, migiMaru], {
+      availableSp: 90,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resWithNormal.maxGradeValue, 129);
+    assert.equal(resWithNormal.totalAdditionalGrade, 129);
+
+    const inherited900011 = makeSkill(900011, { recognizedCost: 0, state: 'acquired' });
+    const resInherited = solver.solve([inherited900011], {
+      availableSp: 0,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resInherited.maxGradeValue, 180);
+  });
+});
+
+describe('Skill Test Mode (技能試験スコア最大化)', () => {
+  const masterData = JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'));
+  const masterStore = new MasterStore(masterData);
+  const solver = new TypeScriptSkillSolver(masterStore);
+  const defaultAptitudes = {
+    turf: 'A',
+    dirt: 'G',
+    short: 'A',
+    mile: 'A',
+    middle: 'A',
+    long: 'A',
+    nige: 'A',
+    senkou: 'A',
+    sashi: 'A',
+    oikomi: 'A',
+  };
+
+  function makeSkill(skillId, overrides = {}) {
+    const m = masterStore.skillsById.get(skillId);
+    assert.ok(m, `Master skill ${skillId} must exist`);
+    return {
+      id: m.id,
+      name: m.name,
+      recognizedCost: overrides.recognizedCost ?? m.needSkillPoint,
+      baseCost: m.needSkillPoint,
+      gradeValue: m.gradeValue,
+      rarity: m.rarity,
+      groupId: m.groupId,
+      groupRate: m.groupRate,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve: false,
+      lastSeenTimestamp: 0,
+      ...overrides,
+    };
+  }
+
+  test('scores normal white skills, succession evolutions, and scoreBreakdown accurately (T1-T3, T10)', () => {
+    // What: Verifies skillTest bonus (+400 white, +1500 evolved) and score/SP efficiency for テンポアップ (200722),
+    // 右回り○ (200012), succession evolution 901351 -> 91101351, and scoreBreakdown identity.
+    const tempoUp = makeSkill(200722, { recognizedCost: 160 }); // 217 * 1.1 = 239 + 400 = 639, 639/160 = 3.99
+    const migiMaru = makeSkill(200012, { recognizedCost: 90 }); // 129 + 400 = 529, 529/90 = 5.88
+    const stayGold = makeSkill(901351, { recognizedCost: 200, canEvolve: true }); // 264 + 1500 = 1764
+
+    const res = solver.solve([tempoUp, migiMaru, stayGold], {
+      availableSp: 450,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'skillTest',
+    });
+
+    const rTempo = res.recommendedSkills.find((r) => r.skill.id === 200722);
+    const rMigi = res.recommendedSkills.find((r) => r.skill.id === 200012);
+    const rStay = res.recommendedSkills.find((r) => r.skill.id === 901351);
+
+    assert.equal(rTempo?.effectiveGrade, 239);
+    assert.equal(rTempo?.bonusPoints, 400);
+    assert.equal(rTempo?.scoreGain, 639);
+    assert.equal(rTempo?.costPerformance, 3.99);
+
+    assert.equal(rMigi?.effectiveGrade, 129);
+    assert.equal(rMigi?.bonusPoints, 400);
+    assert.equal(rMigi?.scoreGain, 529);
+    assert.equal(rMigi?.costPerformance, 5.88);
+
+    assert.equal(rStay?.effectiveGrade, 264);
+    assert.equal(rStay?.bonusPoints, 1500);
+    assert.equal(rStay?.scoreGain, 1764);
+    const succEvo = res.evolutionRecommendations.find((e) => e.slotType === 'succession' && e.baseSkillId === 901351);
+    assert.equal(succEvo?.scoreDelta, 66 + 1100);
+
+    assert.equal(res.skillBonusTotal, 400 + 400 + 1500);
+    assert.deepEqual(res.scoreBreakdown, {
+      gradeValue: res.maxGradeValue,
+      skillBonus: res.skillBonusTotal,
+      total: res.maxGradeValue + res.skillBonusTotal,
+    });
+  });
+
+  test('computes incremental bonuses for ○->◎ (+0), white->gold (+800), acquired gold evo (+300), and unselected gold evo (+1500) (T4-T7)', () => {
+    // What: Verifies delta bonuses across tier upgrades in skillTest mode so same-group upgrades never double-count bonuses.
+    // T4: acquired ○ (200012) -> candidate ◎ (200011): delta bonus = 0
+    const migiAcq = makeSkill(200012, { recognizedCost: 0, state: 'acquired' });
+    const migiDouble = makeSkill(200011, { recognizedCost: 110 });
+    const resT4 = solver.solve([migiAcq, migiDouble], {
+      availableSp: 110,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'skillTest',
+    });
+    assert.equal(resT4.recommendedSkills[0]?.bonusPoints, 0);
+    assert.equal(resT4.recommendedSkills[0]?.scoreGain, 174 - 129);
+    assert.equal(resT4.skillBonusTotal, 400);
+
+    // T5: acquired ○ (201112) -> candidate gold (201113): delta bonus = +800
+    const midCornerAcq = makeSkill(201112, { recognizedCost: 0, state: 'acquired' });
+    const koubouGold = makeSkill(201113, { recognizedCost: 150 });
+    const resT5 = solver.solve([midCornerAcq, koubouGold], {
+      availableSp: 150,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'skillTest',
+    });
+    assert.equal(resT5.recommendedSkills[0]?.bonusPoints, 800);
+    assert.equal(resT5.recommendedSkills[0]?.scoreGain, 559 - 239 + 800);
+    assert.equal(resT5.skillBonusTotal, 400 + 800);
+
+    // T6: acquired gold (200511) -> chara Lv5 evo: delta bonus = +300, scoreDelta = 125 + 300 = 425
+    const zenshinAcq = makeSkill(200511, { recognizedCost: 0, state: 'acquired' });
+    const resT6 = solver.solve([zenshinAcq], {
+      availableSp: 0,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'skillTest',
+    });
+    assert.equal(resT6.maxGradeValue, 633);
+    assert.equal(resT6.skillBonusTotal, 1500);
+    const lv5AcqEvo = resT6.evolutionRecommendations.find((e) => e.slotType === 'chara_lv5' && e.canEvolve);
+    assert.equal(lv5AcqEvo?.scoreDelta, 125 + 300);
+
+    // T7: unselected gold (200511) -> chara Lv5 evo: bonus = 1500, scoreGain = 633 + 1500 = 2133, scoreDelta = 425
+    const zenshinUnselected = makeSkill(200511, { recognizedCost: 170 });
+    const resT7 = solver.solve([zenshinUnselected], {
+      availableSp: 170,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'skillTest',
+    });
+    assert.equal(resT7.recommendedSkills[0]?.bonusPoints, 1500);
+    assert.equal(resT7.recommendedSkills[0]?.scoreGain, 633 + 1500);
+    const lv5CandEvo = resT7.evolutionRecommendations.find((e) => e.slotType === 'chara_lv5' && e.canEvolve);
+    assert.equal(lv5CandEvo?.scoreDelta, 425);
+  });
+
+  test('excludes body uniques and purple debuffs from bonus, preserves grade mode output, and diverges from grade mode on cheap white skills (T8-T11)', () => {
+    // What: Verifies (T8) body unique 10071 and acquired/candidate purple debuff 200013 give 0 bonus,
+    // (T9) grade mode returns no skillTest-only fields, and (T11) skillTest prefers multiple cheaper whites over fewer high-grade skills.
+    const unique10071 = makeSkill(10071, { recognizedCost: 0, state: 'acquired' });
+    const purpleAcq = makeSkill(200013, { recognizedCost: 0, state: 'acquired' });
+    const purpleCand = makeSkill(200013, { recognizedCost: 50, state: 'unselected' });
+    const resT8 = solver.solve([unique10071, purpleAcq], {
+      availableSp: 50,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'skillTest',
+    });
+    assert.equal(resT8.maxGradeValue, -129);
+    assert.equal(resT8.skillBonusTotal, 0);
+    const resT8OnlyUnique = solver.solve([unique10071, purpleCand], {
+      availableSp: 50,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'skillTest',
+    });
+    assert.equal(resT8OnlyUnique.maxGradeValue, 0);
+    assert.equal(resT8OnlyUnique.skillBonusTotal, 0);
+    assert.equal(resT8OnlyUnique.recommendedSkills.length, 0);
+
+    // T9: grade mode regression
+    const migi = makeSkill(200012, { recognizedCost: 90 });
+    const resGrade = solver.solve([migi], {
+      availableSp: 90,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'grade',
+    });
+    assert.equal('skillBonusTotal' in resGrade, false);
+    assert.equal('scoreBreakdown' in resGrade, false);
+    assert.equal('bonusPoints' in resGrade.recommendedSkills[0], false);
+    assert.equal('scoreGain' in resGrade.recommendedSkills[0], false);
+
+    // T11: budget SP=360: gold 201113 (559pt, SP=360) vs 4 cheap whites (129pt each, SP=90 each => 516pt, bonus 1600)
+    const gold559 = makeSkill(201113, { recognizedCost: 360 });
+    const whites = [200012, 200022, 200032, 200042].map((id) => makeSkill(id, { recognizedCost: 90 }));
+    const optGrade = solver.solve([gold559, ...whites], {
+      availableSp: 360,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'grade',
+    });
+    assert.deepEqual(optGrade.recommendedSkills.map((r) => r.skill.id), [201113]);
+
+    const optSkillTest = solver.solve([gold559, ...whites], {
+      availableSp: 360,
+      aptitudes: defaultAptitudes,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+      mode: 'skillTest',
+    });
+    assert.deepEqual(
+      optSkillTest.recommendedSkills.map((r) => r.skill.id).sort((a, b) => a - b),
+      [200012, 200022, 200032, 200042]
+    );
+    assert.equal(optSkillTest.skillBonusTotal, 1600);
+    assert.equal(optSkillTest.scoreBreakdown?.total, 516 + 1600);
   });
 });

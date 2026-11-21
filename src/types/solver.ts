@@ -1,6 +1,14 @@
 import type { DetectedSkillItem, AptitudeState } from './recognition.ts';
 import type { SkillMasterItem } from './master.ts';
 
+export type SolverMode = 'grade' | 'skillTest';
+
+export interface SkillTestScoreBreakdown {
+  gradeValue: number;
+  skillBonus: number;
+  total: number;
+}
+
 export interface SolverOptions {
   availableSp: number;
   aptitudes: AptitudeState;
@@ -8,6 +16,7 @@ export interface SolverOptions {
   selectedScenarioId?: number; // シナリオ
   lockedSkillIds: number[]; // 必須取得
   excludedSkillIds: number[]; // 除外
+  mode?: SolverMode;
 }
 
 export interface RecommendedSkill {
@@ -16,6 +25,8 @@ export interface RecommendedSkill {
   effectiveGrade: number; // 実際に追加で得られる評価点（下位スキル所持時は差分）
   costPerformance: number; // pt / SP
   reason?: string;
+  bonusPoints?: number;
+  scoreGain?: number;
 }
 
 export interface EvolutionRecommendation {
@@ -26,6 +37,7 @@ export interface EvolutionRecommendation {
   evolvedSkill?: SkillMasterItem;
   canEvolve: boolean; // 進化条件達成
   recommendationNote: string; // どの分岐を選ぶべきか、または適性Gで見送るべきか
+  scoreDelta?: number;
 }
 
 export interface SolverResult {
@@ -35,4 +47,6 @@ export interface SolverResult {
   remainingSp: number; // 余りSP (所持SP - 消費SP)
   recommendedSkills: RecommendedSkill[]; // 今すぐ [+] を押すべきスキル一覧
   evolutionRecommendations: EvolutionRecommendation[]; // 進化選択ガイド
+  skillBonusTotal?: number;
+  scoreBreakdown?: SkillTestScoreBreakdown;
 }
