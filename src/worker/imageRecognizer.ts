@@ -38,6 +38,7 @@ export interface RecognitionOutput {
   skillPointValid?: boolean;
   aptitudes?: Record<string, string>;
   detectedCardId?: number;
+  detectedAwakeningLevel?: number;
   cards: RecognizedCardResult[];
 }
 
@@ -1253,6 +1254,81 @@ export class ImageRecognizer {
 
     if (bestHamN <= 300) {
       return bestCardId;
+    }
+    return undefined;
+  }
+
+  /**
+   * ウマ娘詳細適性ポップアップから覚醒Lv (1〜7) を認識
+   */
+  public recognizeAwakeningLevel(
+    img: ImageBuffer,
+    titlebarOffsetY = 0,
+    anchorDx = 0,
+    anchorDy = 0
+  ): number | undefined {
+    const { width: w, height: h, data } = img;
+    let y0: number;
+    let y1: number;
+    let x0: number;
+    let x1: number;
+
+    if (w > h) {
+      const scale = (h - titlebarOffsetY) / 1080.0;
+      const actualAnchorX = Math.round(412 * scale) + anchorDx;
+      // anchorDy には detectScreenType 側で既に titlebarOffsetY 分が含まれるため二重加算しない
+      const actualAnchorY = Math.round(346 * scale) + anchorDy;
+      y0 = Math.max(0, actualAnchorY - Math.round(174 * scale));
+      y1 = Math.min(h, actualAnchorY - Math.round(140 * scale));
+      x0 = Math.max(0, actualAnchorX + Math.round(255 * scale));
+      x1 = Math.min(w, actualAnchorX + Math.round(320 * scale));
+    } else {
+      const scaleW = w / 561.0;
+      const scaleH = (h - titlebarOffsetY) / 997.0;
+      y0 = Math.max(0, Math.round(160 * scaleH) + anchorDy);
+      y1 = Math.min(h, Math.round(192 * scaleH) + anchorDy);
+      x0 = Math.max(0, Math.round(385 * scaleW) + anchorDx);
+      x1 = Math.min(w, Math.round(445 * scaleW) + anchorDx);
+    }
+
+    const roiW = x1 - x0;
+    const roiH = y1 - y0;
+    if (roiW <= 10 || roiH <= 6) return undefined;
+
+    const bin = new Uint8Array(roiW * roiH);
+    for (let y = 0; y < roiH; y++) {
+      const rowOffset = (y0 + y) * w;
+      for (let x = 0; x < roiW; x++) {
+        const idx = (rowOffset + (x0 + x)) * 4;
+        const luma = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+        bin[y * roiW + x] = luma < 135 ? 255 : 0;
+      }
+    }
+
+    const ccs = connectedComponentsWithStats(bin, roiW, roiH);
+    const minArea = Math.max(4, Math.round(roiH * 0.12));
+    const minHeight = Math.max(5, Math.round(roiH * 0.30));
+    const validCcs = ccs.filter(
+      (c) =>
+        c.area >= minArea &&
+        c.height >= minHeight &&
+        c.width <= Math.max(25, Math.round(c.height * 1.15))
+    );
+    if (validCcs.length === 0) return undefined;
+
+    validCcs.sort((a, b) => a.left - b.left);
+    const c = validCcs[validCcs.length - 1];
+    const patch = new Uint8Array(c.width * c.height);
+    for (let py = 0; py < c.height; py++) {
+      for (let px = 0; px < c.width; px++) {
+        patch[py * c.width + px] = bin[(c.top + py) * roiW + (c.left + px)];
+      }
+    }
+
+    const ch = this.recognizeDigit(patch, c.width, c.height);
+    const level = parseInt(ch, 10);
+    if (level >= 1 && level <= 7) {
+      return level;
     }
     return undefined;
   }
@@ -2788,6 +2864,12 @@ export class ImageRecognizer {
     if (screenType === 'ウマ娘詳細適性ポップアップ') {
       const aptitudes = this.recognizeAptitudes(img, titlebarOffsetY, anchorDx ?? 0, anchorDy ?? 0);
       const detectedCardId = this.recognizeCardId(img, titlebarOffsetY, anchorDx ?? 0, anchorDy ?? 0);
+      const detectedAwakeningLevel = this.recognizeAwakeningLevel(
+        img,
+        titlebarOffsetY,
+        anchorDx ?? 0,
+        anchorDy ?? 0
+      );
       if (aptitudes) {
         return {
           screenType,
@@ -2796,6 +2878,7 @@ export class ImageRecognizer {
           skillPointValid: false,
           aptitudes,
           detectedCardId,
+          detectedAwakeningLevel,
           cards: [],
         };
       }

@@ -30,6 +30,7 @@ export interface DetectedSkillItem {
   isLocked: boolean; // 必須取得ロック
   isExcluded: boolean; // 除外
   canEvolve: boolean; // 進化条件達成
+  hasEvoBadge?: boolean; // 画像認識で検出された進化条件達成/進化可能ラベル有無
   lastSeenTimestamp: number;
   firstSeenOrder?: number; // 画面上で認識・確定された順序番号
 }

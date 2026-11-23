@@ -18,6 +18,7 @@ export type WorkerToMainMessage =
       detectedSkillPoint?: number;
       detectedAptitudes?: Partial<AptitudeState>;
       detectedCardId?: number;
+      detectedAwakeningLevel?: number;
       detectedSkills: DetectedSkillItem[];
       latencyMs: number;
     }

@@ -13,6 +13,7 @@ interface AggregatedFrameResult {
   detectedSkillPoint?: number;
   detectedAptitudes?: Partial<AptitudeState>;
   detectedCardId?: number;
+  detectedAwakeningLevel?: number;
   detectedSkills: DetectedSkillItem[];
 }
 
@@ -29,6 +30,7 @@ export class RecognitionAggregator {
   private lastValidAptitudes: Partial<AptitudeState> | undefined = undefined;
   private candidateAptitudes: Partial<AptitudeState> | undefined = undefined;
   private lastValidCardId: number | undefined = undefined;
+  private lastValidAwakeningLevel: number | undefined = undefined;
 
   private lastConfirmedSkillPoint: number | undefined = undefined;
   private candidateSkillPoint: { val: number; count: number; lastFrame: number } | undefined =
@@ -55,6 +57,7 @@ export class RecognitionAggregator {
     this.cachedSkillsArray = [];
     this.skillsDirty = true;
     this.lastValidCardId = undefined;
+    this.lastValidAwakeningLevel = undefined;
     this.lastValidAptitudes = undefined;
     this.candidateAptitudes = undefined;
     this.lastConfirmedSkillPoint = undefined;
@@ -174,6 +177,10 @@ export class RecognitionAggregator {
       if (activeUniqueSkill) {
         this.removeInheritableDuplicatesByName(activeUniqueSkill.name);
       }
+    }
+
+    if (output.detectedAwakeningLevel && output.screenType === 'ウマ娘詳細適性ポップアップ') {
+      this.lastValidAwakeningLevel = output.detectedAwakeningLevel;
     }
 
     const isSkillPointValid = output.skillPointValid ?? output.skillPoint > 0;
@@ -316,6 +323,7 @@ export class RecognitionAggregator {
                   isLocked: false,
                   isExcluded: false,
                   canEvolve: false,
+                  hasEvoBadge: false,
                   lastSeenTimestamp: Date.now(),
                   firstSeenOrder: this.nextRecognitionOrder++,
                 });
@@ -373,6 +381,7 @@ export class RecognitionAggregator {
                   isLocked: false,
                   isExcluded: false,
                   canEvolve: false,
+                  hasEvoBadge: false,
                   lastSeenTimestamp: Date.now(),
                   firstSeenOrder: this.nextRecognitionOrder++,
                 });
@@ -384,6 +393,7 @@ export class RecognitionAggregator {
         }
 
         const canEvolve = Boolean(card.canEvolve || existing?.canEvolve);
+        const hasEvoBadge = Boolean(card.canEvolve || existing?.hasEvoBadge || existing?.canEvolve);
         const latestMeta = this.skillMeta.get(card.skillId);
         const nextMeta = latestMeta
           ? { ...latestMeta, synthetic: false, costCounts: nextCostCounts }
@@ -394,7 +404,8 @@ export class RecognitionAggregator {
           !existing ||
           existing.state !== cardState ||
           existing.recognizedCost !== recognizedCost ||
-          existing.canEvolve !== canEvolve
+          existing.canEvolve !== canEvolve ||
+          existing.hasEvoBadge !== hasEvoBadge
         ) {
           this.skillsDirty = true;
           this.accumulatedSkills.set(card.skillId, {
@@ -410,6 +421,7 @@ export class RecognitionAggregator {
             isLocked: existing ? existing.isLocked : false,
             isExcluded: existing ? existing.isExcluded : false,
             canEvolve,
+            hasEvoBadge,
             lastSeenTimestamp: Date.now(),
             firstSeenOrder: existing ? existing.firstSeenOrder : this.nextRecognitionOrder++,
           });
@@ -427,6 +439,7 @@ export class RecognitionAggregator {
       detectedSkillPoint,
       detectedAptitudes,
       detectedCardId: output.detectedCardId || this.lastValidCardId,
+      detectedAwakeningLevel: output.detectedAwakeningLevel || this.lastValidAwakeningLevel,
       detectedSkills: this.cachedSkillsArray,
     };
   }

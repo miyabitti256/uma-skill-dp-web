@@ -96,14 +96,15 @@ export class MasterStore {
   }
 
   /**
-   * 金スキル（rarity === 2）が育成ウマ娘またはシナリオの進化対象であるか、
+   * 金スキル（rarity === 2）が育成ウマ娘（覚醒Lv以内）またはシナリオの進化対象であるか、
    * 継承固有スキル（rarity === 1）が進化可能ラベル付きで継承進化対象であるかを判定
    */
   public isSkillEvolvable(
     skillId: number,
     cardId?: number,
     scenarioId?: number,
-    hasEvoBadge = true
+    hasEvoBadge = true,
+    awakeningLevel = 7
   ): boolean {
     const skill = this.skillsById.get(skillId);
     if (!skill || !this.data) return false;
@@ -122,10 +123,10 @@ export class MasterStore {
 
     if (skill.rarity !== 2) return false;
 
-    // キャラ進化チェック (育成ウマ娘が選択されている場合のみ)
+    // キャラ進化チェック (育成ウマ娘が選択されている場合のみ、覚醒Lv上限内)
     if (cardId !== undefined && cardId > 0) {
       const charaEvos = this.charaEvolutionsByCardId.get(cardId);
-      if (charaEvos && charaEvos.some((e) => e.baseSkillId === skillId)) {
+      if (charaEvos && charaEvos.some((e) => e.baseSkillId === skillId && e.slotRank <= awakeningLevel)) {
         return true;
       }
     }

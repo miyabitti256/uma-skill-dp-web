@@ -92,6 +92,7 @@ function App() {
   const [isAptitudeLocked, setIsAptitudeLocked] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<number | undefined>(undefined);
   const [isCardAutoDetected, setIsCardAutoDetected] = useState(false);
+  const [awakeningLevel, setAwakeningLevel] = useState<number>(7);
   const [selectedScenarioId, setSelectedScenarioId] = useState<number | undefined>(undefined);
   const [connectedWindowLabel, setConnectedWindowLabel] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -184,6 +185,12 @@ function App() {
             setIsCardAutoDetected((prev) => (prev ? prev : true));
           }
 
+          if (msg.detectedAwakeningLevel) {
+            setAwakeningLevel((prev) =>
+              prev === msg.detectedAwakeningLevel ? prev : msg.detectedAwakeningLevel!
+            );
+          }
+
           // スキルリストの蓄積更新（参照同一フレームは O(1) スキップ・イミュータブル更新）
           if (
             (msg.detectedSkills.length > 0 || (lastDetectedSkillsRef.current?.length ?? 0) > 0) &&
@@ -261,21 +268,28 @@ function App() {
     };
   }, [isDataLoaded]);
 
-  // 進化可能フラグをマスタ・選択中ウマ娘・シナリオから純粋導出
+  // 進化可能フラグをマスタ・選択中ウマ娘・シナリオ・覚醒Lvから純粋導出
   const effectiveSkills = useMemo(() => {
     if (!isDataLoaded || skills.length === 0) return skills;
     const store = MasterStore.getInstance();
     let changed = false;
     const next = skills.map((s) => {
-      const canEvolve = store.isSkillEvolvable(s.id, selectedCardId, selectedScenarioId, s.canEvolve);
-      if (canEvolve !== s.canEvolve) {
+      const rawBadge = s.hasEvoBadge ?? s.canEvolve;
+      const canEvolve = store.isSkillEvolvable(
+        s.id,
+        selectedCardId,
+        selectedScenarioId,
+        rawBadge,
+        awakeningLevel
+      );
+      if (canEvolve !== s.canEvolve || s.hasEvoBadge !== rawBadge) {
         changed = true;
-        return { ...s, canEvolve };
+        return { ...s, hasEvoBadge: rawBadge, canEvolve };
       }
       return s;
     });
     return changed ? next : skills;
-  }, [skills, selectedCardId, selectedScenarioId, isDataLoaded]);
+  }, [skills, selectedCardId, selectedScenarioId, awakeningLevel, isDataLoaded]);
 
   // 3. ソルバー計算の実行
   useEffect(() => {
@@ -291,6 +305,7 @@ function App() {
           aptitudes,
           selectedCardId,
           selectedScenarioId,
+          awakeningLevel,
           lockedSkillIds: lockedIds,
           excludedSkillIds: excludedIds,
           mode: solverMode,
@@ -304,7 +319,15 @@ function App() {
     }, 60);
 
     return () => window.clearTimeout(timerId);
-  }, [effectiveSkills, availableSp, aptitudes, selectedCardId, selectedScenarioId, solverMode]);
+  }, [
+    effectiveSkills,
+    availableSp,
+    aptitudes,
+    selectedCardId,
+    selectedScenarioId,
+    awakeningLevel,
+    solverMode,
+  ]);
 
   // 操作ハンドラ
   const handleStartLive = useCallback(async () => {
@@ -473,6 +496,8 @@ function App() {
             selectedCardId={selectedCardId}
             onCardSelect={handleCardSelect}
             isCardAutoDetected={isCardAutoDetected}
+            awakeningLevel={awakeningLevel}
+            onAwakeningLevelChange={setAwakeningLevel}
             scenarios={scenarios}
             selectedScenarioId={selectedScenarioId}
             onScenarioSelect={handleScenarioSelect}

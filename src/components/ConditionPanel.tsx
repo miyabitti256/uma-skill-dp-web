@@ -20,6 +20,9 @@ interface ConditionPanelProps {
   onCardSelect: (cardId: number) => void;
   isCardAutoDetected?: boolean;
 
+  awakeningLevel: number;
+  onAwakeningLevelChange: (level: number) => void;
+
   scenarios: ScenarioItem[];
   selectedScenarioId?: number;
   onScenarioSelect: (scenarioId: number) => void;
@@ -82,6 +85,8 @@ export function ConditionPanel({
   selectedCardId,
   onCardSelect,
   isCardAutoDetected,
+  awakeningLevel,
+  onAwakeningLevelChange,
   scenarios,
   selectedScenarioId,
   onScenarioSelect,
@@ -196,6 +201,25 @@ export function ConditionPanel({
             {filteredCards.map((c) => (
               <option key={c.cardId} value={c.cardId}>
                 {c.charaName} {c.cardTitle ? `(${c.cardTitle})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center justify-between gap-2">
+          <label htmlFor="awakening-level-select" className="text-[11px] font-bold text-[#6b5342]">
+            覚醒Lv
+          </label>
+          <select
+            id="awakening-level-select"
+            aria-label="覚醒Lv"
+            value={awakeningLevel}
+            onChange={(e) => onAwakeningLevelChange(Number(e.target.value))}
+            className="w-24 bg-[#f8f7fa] border border-[#c6c3cc] rounded px-2 py-0.5 text-xs font-bold text-[#5b4333] focus:outline-none focus:border-[#76c30f]"
+          >
+            {[7, 6, 5, 4, 3, 2, 1].map((lv) => (
+              <option key={lv} value={lv}>
+                Lv{lv}
               </option>
             ))}
           </select>

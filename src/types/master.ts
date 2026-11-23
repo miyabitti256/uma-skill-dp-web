@@ -1,3 +1,8 @@
+export interface SkillConditionRequirement {
+  mask: number; // 条件タグビットマスク
+  count: number; // 必要所持スキル数
+}
+
 export interface SkillMasterItem {
   id: number;
   name: string;
@@ -8,6 +13,7 @@ export interface SkillMasterItem {
   needSkillPoint: number; // 定価SP
   distanceTypes: number[]; // 1:短距離, 2:マイル, 3:中距離, 4:長距離
   runningStyles: number[]; // 1:逃げ, 2:先行, 3:差し, 4:追込
+  conditionMask?: number; // 進化条件判定用16bit条件マスク
 }
 
 export interface CharaEvolutionItem {
@@ -15,6 +21,7 @@ export interface CharaEvolutionItem {
   slotRank: number; // 3: 覚醒Lv3, 5: 覚醒Lv5, 7: 覚醒Lv7
   baseSkillId: number;
   evolvedSkillId: number;
+  requiredSkillConditions?: SkillConditionRequirement[][];
 }
 
 export interface ScenarioItem {
@@ -27,6 +34,7 @@ export interface ScenarioEvolutionItem {
   scenarioId: number;
   baseSkillId: number;
   evolvedSkillId: number;
+  requiredSkillConditions?: SkillConditionRequirement[][];
 }
 
 export interface SuccessionEvolutionItem {

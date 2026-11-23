@@ -24,12 +24,16 @@ export function mergeRecognizedSkills(
       const nextCanEvolve = isRefreshed
         ? Boolean(s.canEvolve || existing.canEvolve)
         : existing.canEvolve;
+      const incomingBadge = s.hasEvoBadge ?? s.canEvolve;
+      const prevBadge = existing.hasEvoBadge ?? existing.canEvolve;
+      const nextHasEvoBadge = isRefreshed ? Boolean(incomingBadge || prevBadge) : prevBadge;
       const nextTs = isRefreshed ? s.lastSeenTimestamp : existing.lastSeenTimestamp;
 
       if (
         nextState !== existing.state ||
         nextCost !== existing.recognizedCost ||
-        nextCanEvolve !== existing.canEvolve
+        nextCanEvolve !== existing.canEvolve ||
+        nextHasEvoBadge !== existing.hasEvoBadge
       ) {
         hasChanged = true;
       }
@@ -37,6 +41,7 @@ export function mergeRecognizedSkills(
         nextState === existing.state &&
         nextCost === existing.recognizedCost &&
         nextCanEvolve === existing.canEvolve &&
+        nextHasEvoBadge === existing.hasEvoBadge &&
         nextTs === existing.lastSeenTimestamp
       ) {
         nextList.push(existing);
@@ -46,6 +51,7 @@ export function mergeRecognizedSkills(
           state: nextState,
           recognizedCost: nextCost,
           canEvolve: nextCanEvolve,
+          hasEvoBadge: nextHasEvoBadge,
           lastSeenTimestamp: nextTs,
         });
       }

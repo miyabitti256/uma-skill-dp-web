@@ -265,6 +265,7 @@ export class RecognitionWorkerPool {
         detectedSkillPoint: aggregated.detectedSkillPoint,
         detectedAptitudes: aggregated.detectedAptitudes,
         detectedCardId: aggregated.detectedCardId,
+        detectedAwakeningLevel: aggregated.detectedAwakeningLevel,
         detectedSkills: aggregated.detectedSkills,
         latencyMs: item.latencyMs,
       });

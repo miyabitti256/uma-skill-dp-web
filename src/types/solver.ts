@@ -14,6 +14,7 @@ export interface SolverOptions {
   aptitudes: AptitudeState;
   selectedCardId?: number; // 育成ウマ娘
   selectedScenarioId?: number; // シナリオ
+  awakeningLevel?: number; // 覚醒Lv (1..7, 省略時 7)
   lockedSkillIds: number[]; // 必須取得
   excludedSkillIds: number[]; // 除外
   mode?: SolverMode;
@@ -30,7 +31,7 @@ export interface RecommendedSkill {
 }
 
 export interface EvolutionRecommendation {
-  slotType: 'chara_lv3' | 'chara_lv5' | 'scenario' | 'succession';
+  slotType: 'chara_lv3' | 'chara_lv5' | 'chara_lv7' | 'scenario' | 'succession';
   slotName: string;
   baseSkillName: string;
   baseSkillId: number;

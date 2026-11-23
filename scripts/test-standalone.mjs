@@ -2270,3 +2270,410 @@ describe('Skill Test Mode (技能試験スコア最大化)', () => {
     assert.equal(optSkillTest.scoreBreakdown?.total, 516 + 1600);
   });
 });
+
+// 19. 覚醒Lv7 3枠目対応 & スキル所持数進化条件DP最適化回帰テスト (Issue #1)
+describe('Awakening Lv7 (3rd Slot) & Skill-Count Evolution Condition DP (Issue #1)', () => {
+  const masterData = JSON.parse(fs.readFileSync(resolveDataFile('skill_master.json'), 'utf8'));
+  const masterStore = new MasterStore(masterData);
+  const solver = new TypeScriptSkillSolver(masterStore);
+  const defaultAptitudes = {
+    turf: 'A',
+    dirt: 'G',
+    short: 'A',
+    mile: 'A',
+    middle: 'A',
+    long: 'A',
+    nige: 'A',
+    senkou: 'A',
+    sashi: 'A',
+    oikomi: 'A',
+  };
+
+  function makeDetectedSkill(skillId, overrides = {}) {
+    const m = masterStore.skillsById.get(skillId);
+    assert.ok(m, `Master skill ${skillId} must exist`);
+    return {
+      id: m.id,
+      name: m.name,
+      recognizedCost: overrides.recognizedCost ?? m.needSkillPoint,
+      baseCost: m.needSkillPoint,
+      gradeValue: m.gradeValue,
+      rarity: m.rarity,
+      groupId: m.groupId,
+      groupRate: m.groupRate,
+      state: 'unselected',
+      isLocked: false,
+      isExcluded: false,
+      canEvolve: false,
+      lastSeenTimestamp: 0,
+      ...overrides,
+    };
+  }
+
+  test('evaluates all 3 awakening evolutions (Lv3/Lv5/Lv7) simultaneously and filters Lv7 when awakeningLevel=5', () => {
+    // What: Verifies that (1) Special Week (100101) evolves Lv3 (201351 -> 100101111), Lv5 (200511 -> 100101211),
+    // and Lv7 (204111 -> 100101311) simultaneously at awakeningLevel=7, (2) awakeningLevel=5 disables Lv7 chara evolution
+    // in both MasterStore.isSkillEvolvable and TypeScriptSkillSolver while keeping Lv3/Lv5, and (3) El Condor Pasa (101401)
+    // + Scenario 10 falls back to Scenario evolution (410051) at awakeningLevel=5 and avoids duplicate evolution at awakeningLevel=7.
+
+    // 1. スペシャルウィーク (100101): Lv3 食いしん坊 (696) + Lv5 全身全霊 (633) + Lv7 行雲流水 (696) = 2025pt
+    // (hasEvoBadge: true または白スキルなし無条件扱いの両方で 3枠同時進化を確認)
+    const lv3 = makeDetectedSkill(201351, { recognizedCost: 180, hasEvoBadge: true });
+    const lv5 = makeDetectedSkill(200511, { recognizedCost: 170, hasEvoBadge: true });
+    const lv7 = makeDetectedSkill(204111, { recognizedCost: 180, hasEvoBadge: true });
+
+    for (const inputs of [
+      [lv3, lv5, lv7],
+      [
+        makeDetectedSkill(201351, { recognizedCost: 180 }),
+        makeDetectedSkill(200511, { recognizedCost: 170 }),
+        makeDetectedSkill(204111, { recognizedCost: 180 }),
+      ],
+    ]) {
+      const resLv7 = solver.solve(inputs, {
+        availableSp: 530,
+        aptitudes: defaultAptitudes,
+        selectedCardId: 100101,
+        awakeningLevel: 7,
+        lockedSkillIds: [],
+        excludedSkillIds: [],
+      });
+      assert.equal(resLv7.maxGradeValue, 696 + 633 + 696);
+      assert.equal(resLv7.totalAdditionalGrade, 2025);
+      for (const slotType of ['chara_lv3', 'chara_lv5', 'chara_lv7']) {
+        const rec = resLv7.evolutionRecommendations.find((e) => e.slotType === slotType);
+        assert.ok(rec && rec.canEvolve, `${slotType} must evolve at awakeningLevel=7`);
+        assert.equal(rec.evolvedSkill?.gradeValue, 633);
+      }
+    }
+
+    // 2. awakeningLevel=5 指定時は Lv7 (204111) が進化不可 (未進化 559pt) となり、推奨に chara_lv7 が出ない
+    assert.equal(masterStore.isSkillEvolvable(204111, 100101, undefined, false, 7), true);
+    assert.equal(masterStore.isSkillEvolvable(204111, 100101, undefined, false, 5), false);
+    assert.equal(masterStore.isSkillEvolvable(200511, 100101, undefined, false, 5), true);
+    assert.equal(masterStore.isSkillEvolvable(201351, 100101, undefined, false, 5), true);
+
+    const resLv5 = solver.solve([lv3, lv5, lv7], {
+      availableSp: 530,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      awakeningLevel: 5,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resLv5.maxGradeValue, 696 + 633 + 559);
+    assert.equal(resLv5.totalAdditionalGrade, 1888);
+    assert.equal(resLv5.evolutionRecommendations.some((e) => e.slotType === 'chara_lv7'), false);
+    assert.equal(resLv5.evolutionRecommendations.find((e) => e.slotType === 'chara_lv3')?.canEvolve, true);
+    assert.equal(resLv5.evolutionRecommendations.find((e) => e.slotType === 'chara_lv5')?.canEvolve, true);
+
+    // 3. エルコンドルパサー (101401) + シナリオ10 (The Twinkle Legends) で 王手 (202711)
+    assert.equal(masterStore.isSkillEvolvable(202711, 101401, undefined, false, 5), false);
+    assert.equal(masterStore.isSkillEvolvable(202711, 101401, undefined, false, 7), true);
+    assert.equal(masterStore.isSkillEvolvable(202711, 101401, 10, false, 5), true);
+
+    const oute = makeDetectedSkill(202711, { recognizedCost: 180 });
+    const resOuteLv5 = solver.solve([oute], {
+      availableSp: 180,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 101401,
+      selectedScenarioId: 10,
+      awakeningLevel: 5,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resOuteLv5.maxGradeValue, 696);
+    assert.equal(resOuteLv5.evolutionRecommendations.some((e) => e.slotType === 'chara_lv7'), false);
+    const scenOute = resOuteLv5.evolutionRecommendations.find((e) => e.slotType === 'scenario');
+    assert.ok(scenOute && scenOute.canEvolve && scenOute.evolvedSkill?.id === 410051);
+
+    // awakeningLevel=7 かつ両方進化可能な場合も重複進化せず 696pt のみ計上
+    const resOuteLv7 = solver.solve([oute], {
+      availableSp: 180,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 101401,
+      selectedScenarioId: 10,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resOuteLv7.maxGradeValue, 696);
+    assert.equal(resOuteLv7.evolutionRecommendations.filter((e) => e.canEvolve).length, 1);
+
+    // 白スキル入力ありで「速度不足（自前Lv7不可）＋先行2個あり（シナリオ10可）」ならシナリオ進化を自動選択
+    const senkou1 = makeDetectedSkill(200562, { recognizedCost: 100 }); // スタミナキープ (回復+先行, 速度なし)
+    const senkou2 = makeDetectedSkill(200572, { recognizedCost: 100 }); // 好位追走 (回復+先行, 速度なし)
+    const resOuteFallbackScen = solver.solve(
+      [makeDetectedSkill(202711, { recognizedCost: 180, hasEvoBadge: false }), senkou1, senkou2],
+      {
+        availableSp: 380,
+        aptitudes: defaultAptitudes,
+        selectedCardId: 101401,
+        selectedScenarioId: 10,
+        awakeningLevel: 7,
+        lockedSkillIds: [],
+        excludedSkillIds: [],
+      }
+    );
+    const scenFallback = resOuteFallbackScen.evolutionRecommendations.find((e) => e.slotType === 'scenario');
+    const lv7Fallback = resOuteFallbackScen.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7');
+    assert.ok(scenFallback && scenFallback.canEvolve && scenFallback.evolvedSkill?.id === 410051);
+    assert.equal(lv7Fallback?.canEvolve, false);
+    assert.equal(lv7Fallback?.recommendationNote, 'シナリオ進化を優先（重複進化不可）');
+  });
+
+  test('selects lower-standalone-value prerequisite white skill to unlock gold evolution bonus in DP (Cases 1-3)', () => {
+    // What: Verifies skill-count condition DP for Nakayama Festa (104901, Lv7 雲蒸竜変 202651 -> All-in!!, <中距離> >= 2):
+    // (1) DP picks lower-grade 中距離 white ホークアイ (142pt) over higher-grade non-中距離 直線巧者 (217pt) to unlock +137pt evo,
+    // (2) DP buys ホークアイ to satisfy an already-acquired 雲蒸竜変 for the free +137pt evolution bonus, and
+    // (3) falls back to unevolved 559pt with '進化条件（スキル所持数）未達成' when prerequisite middle-distance skills are unavailable.
+
+    // ケース1: 未選択 雲蒸竜変 (180 SP, 559->696) + 非中距離 直線巧者 (100 SP, 217pt) vs 中距離 ホークアイ (100 SP, 142pt)
+    const unjo = makeDetectedSkill(202651, { recognizedCost: 180, hasEvoBadge: false });
+    const nonMiddleWhite = makeDetectedSkill(200362, { recognizedCost: 100 }); // 直線巧者: 217pt
+    const middleWhite = makeDetectedSkill(201122, { recognizedCost: 100 }); // ホークアイ: 129*1.1 = 142pt
+
+    const resCase1 = solver.solve([unjo, nonMiddleWhite, middleWhite], {
+      availableSp: 280,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 104901,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.deepEqual(
+      resCase1.recommendedSkills.map((r) => r.skill.id).sort((a, b) => a - b),
+      [201122, 202651],
+      'DP must pair ホークアイ (142pt) with 雲蒸竜変 (696pt) = 838pt instead of 直線巧者 (217pt) + unevolved (559pt) = 776pt'
+    );
+    assert.equal(resCase1.maxGradeValue, 142 + 696);
+    assert.equal(resCase1.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve, true);
+
+    // ケース2: 既取得 (acquired) の 雲蒸竜変 の不足条件を候補白スキル購入で補い無料進化ボーナス (+137pt) を得る
+    const acquiredUnjo = makeDetectedSkill(202651, {
+      recognizedCost: 0,
+      state: 'acquired',
+      hasEvoBadge: false,
+    });
+    const resCase2 = solver.solve([acquiredUnjo, nonMiddleWhite, middleWhite], {
+      availableSp: 100,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 104901,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.deepEqual(resCase2.recommendedSkills.map((r) => r.skill.id), [201122]);
+    assert.equal(resCase2.totalAdditionalGrade, 142 + 137);
+    assert.equal(resCase2.maxGradeValue, 559 + 142 + 137);
+    const lv7Case2 = resCase2.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7');
+    assert.ok(lv7Case2 && lv7Case2.canEvolve && lv7Case2.evolvedSkill?.id === 104901311);
+
+    // ケース3: 条件スキル不足（一般白スキルのみ、または中距離白スキルがSP不足で買えない）の場合は未進化フォールバック
+    const resCase3NoMiddle = solver.solve([acquiredUnjo, nonMiddleWhite], {
+      availableSp: 100,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 104901,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resCase3NoMiddle.maxGradeValue, 559 + 217);
+    const lv7Case3 = resCase3NoMiddle.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7');
+    assert.equal(lv7Case3?.canEvolve, false);
+    assert.equal(lv7Case3?.recommendationNote, '進化条件（スキル所持数）未達成');
+
+    const resCase3LowSp = solver.solve([acquiredUnjo, middleWhite], {
+      availableSp: 50,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 104901,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resCase3LowSp.maxGradeValue, 559);
+    const lv7Case3Low = resCase3LowSp.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7');
+    assert.equal(lv7Case3Low?.canEvolve, false);
+    assert.equal(lv7Case3Low?.recommendationNote, '進化条件（スキル所持数）未達成');
+  });
+
+  test('handles effect-type, OR, Oonige, same-group non-double-counting, and hasEvoBadge bypass conditions (Case 4)', () => {
+    // What: Verifies (4a) El Condor Pasa Lv7 王手 (速度>=3) counts innate unique 100141 once whether omitted or acquired,
+    // (4b) Special Week Lv7 行雲流水 (<先行>4 OR <差し>4) evolves when either branch reaches 4 (not 3+3 split),
+    // (4c) Silence Suzuka Lv5 逃亡者 (大逃げ OR <逃げ>4) evolves via 大逃げ (202051) or 3 additional <逃げ> whites,
+    // (4d) upgrading ○->◎ within the same groupId does not double-count toward skill-count conditions, and
+    // (4e) hasEvoBadge=true bypasses skill-count constraints even when prerequisite white skills are absent.
+
+    // 4a. エルコンドルパサー (101401) Lv7 王手 (202711: 速度なし, 固有 100141: 速度+1)
+    const outeAcq = makeDetectedSkill(202711, { recognizedCost: 0, state: 'acquired', hasEvoBadge: false });
+    const speed1 = makeDetectedSkill(200362, { recognizedCost: 100 }); // 直線巧者 (速度)
+    const speed2 = makeDetectedSkill(201611, { recognizedCost: 100 }); // 尻尾上がり (速度)
+    const accelOnly = makeDetectedSkill(200342, { recognizedCost: 100 }); // コーナー加速○ (非速度)
+
+    // 固有(1) + speed1(1) = 2 < 3 -> 未進化
+    const resOute2 = solver.solve([outeAcq, speed1, accelOnly], {
+      availableSp: 200,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 101401,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resOute2.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve, false);
+    assert.equal(resOute2.maxGradeValue, 559 + 217 + 217);
+
+    // 固有(1) + speed1(1) + speed2(1) = 3 -> 進化 (+137pt)
+    const resOute3 = solver.solve([outeAcq, speed1, speed2], {
+      availableSp: 200,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 101401,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resOute3.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve, true);
+    assert.equal(resOute3.maxGradeValue, 696 + 217 + 217);
+
+    // 固有 100141 が acquired で明示投入されても二重カウントされず speed1 のみでは未進化 (1+1=2 < 3)
+    const innateCondor = makeDetectedSkill(100141, { recognizedCost: 0, state: 'acquired' });
+    const resOuteInnateDup = solver.solve([innateCondor, outeAcq, speed1], {
+      availableSp: 100,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 101401,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resOuteInnateDup.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve, false);
+
+    // 4b. スペシャルウィーク (100101) Lv7 行雲流水 (204111: 先行/差し両方持ち, OR条件: 先行4 OR 差し4)
+    const kounAcq = makeDetectedSkill(204111, { recognizedCost: 0, state: 'acquired', hasEvoBadge: false });
+    const sen1 = makeDetectedSkill(200562, { recognizedCost: 100 });
+    const sen2 = makeDetectedSkill(200572, { recognizedCost: 100 });
+    const sen3 = makeDetectedSkill(200582, { recognizedCost: 100 });
+    const sas1 = makeDetectedSkill(200592, { recognizedCost: 100 });
+    const sas2 = makeDetectedSkill(200602, { recognizedCost: 100 });
+    const sas3 = makeDetectedSkill(200612, { recognizedCost: 100 });
+
+    // 先行2 + 差し2 -> 行雲流水を含めても 先行3 / 差し3 でどちらも4未満 -> 未進化
+    const resSplit = solver.solve([kounAcq, sen1, sen2, sas1, sas2], {
+      availableSp: 400,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resSplit.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve, false);
+
+    // 先行3 (計 先行4) -> 進化
+    const resSenkou4 = solver.solve([kounAcq, sen1, sen2, sen3], {
+      availableSp: 300,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resSenkou4.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve, true);
+    assert.equal(resSenkou4.maxGradeValue, 696 + 239 * 3);
+
+    // 差し3 (計 差し4) -> 進化
+    const resSashi4 = solver.solve([kounAcq, sas1, sas2, sas3], {
+      availableSp: 300,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100101,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resSashi4.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve, true);
+    assert.equal(resSashi4.maxGradeValue, 696 + 239 * 3);
+
+    // 4c. サイレンススズカ (100201) Lv5 逃亡者 (200551: OR条件: 大逃げ202051 1個 OR <逃げ>4個)
+    const touboushaAcq = makeDetectedSkill(200551, { recognizedCost: 0, state: 'acquired', hasEvoBadge: false });
+    const oonigeAcq = makeDetectedSkill(202051, { recognizedCost: 0, state: 'acquired' });
+    const resOonige = solver.solve([touboushaAcq, oonigeAcq, speed1], {
+      availableSp: 100,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100201,
+      awakeningLevel: 5,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resOonige.evolutionRecommendations.find((e) => e.slotType === 'chara_lv5')?.canEvolve, true);
+
+    const nige1 = makeDetectedSkill(200532, { recognizedCost: 100 });
+    const nige2 = makeDetectedSkill(200542, { recognizedCost: 100 });
+    const nige3 = makeDetectedSkill(201242, { recognizedCost: 100 });
+    const resNige3 = solver.solve([touboushaAcq, nige1, nige2], {
+      availableSp: 200,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100201,
+      awakeningLevel: 5,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resNige3.evolutionRecommendations.find((e) => e.slotType === 'chara_lv5')?.canEvolve, false);
+    const resNige4 = solver.solve([touboushaAcq, nige1, nige2, nige3], {
+      availableSp: 300,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 100201,
+      awakeningLevel: 5,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resNige4.evolutionRecommendations.find((e) => e.slotType === 'chara_lv5')?.canEvolve, true);
+
+    // 4d. 同グループ下位○ (201102 中距離直線○) 既所持から ◎ (201101 中距離直線◎) を購入しても速度スキル数は二重カウントされない
+    //     （また ○/◎ 両方が未選択候補で両方買える予算がある場合も同グループは1個分のみカウントされる）
+    const midCircleAcq = makeDetectedSkill(201102, { recognizedCost: 0, state: 'acquired' });
+    const midDoubleCand = makeDetectedSkill(201101, { recognizedCost: 110 });
+    const resNoDupGroup = solver.solve([outeAcq, midCircleAcq, midDoubleCand], {
+      availableSp: 110,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 101401,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(
+      resNoDupGroup.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve,
+      false,
+      'Upgrading acquired ○ to ◎ in same groupId must not double-count speed skill (still 2 < 3)'
+    );
+
+    const midCircleCand = makeDetectedSkill(201102, { recognizedCost: 100 });
+    const resNoDupGroupUnselected = solver.solve([outeAcq, midCircleCand, midDoubleCand], {
+      availableSp: 300,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 101401,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(
+      resNoDupGroupUnselected.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve,
+      false,
+      'Selecting ◎ with ○ in same groupId must count as 1 speed skill, not 2'
+    );
+
+    // 4e. hasEvoBadge: true の金スキルは条件白スキルが不足して見えても制約なしで進化可能
+    const unjoBadge = makeDetectedSkill(202651, {
+      recognizedCost: 0,
+      state: 'acquired',
+      hasEvoBadge: true,
+      canEvolve: true,
+    });
+    const resBadgeBypass = solver.solve([unjoBadge, speed1], {
+      availableSp: 100,
+      aptitudes: defaultAptitudes,
+      selectedCardId: 104901,
+      awakeningLevel: 7,
+      lockedSkillIds: [],
+      excludedSkillIds: [],
+    });
+    assert.equal(resBadgeBypass.evolutionRecommendations.find((e) => e.slotType === 'chara_lv7')?.canEvolve, true);
+    assert.equal(resBadgeBypass.maxGradeValue, 696 + 217);
+  });
+});
