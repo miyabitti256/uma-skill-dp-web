@@ -384,6 +384,77 @@ describe('Font-Free Irreversible-Feature Schema & Init', () => {
     );
     assert.equal(cornerSkill.validCosts.has(84), false, 'validCosts must exclude impossible SP cost 84');
   });
+
+  test('attaches 256-hex char0_q4_16x16 only to firstCharFamily skills and remains backward-compatible without it', () => {
+    // What: Verifies templates.skills attaches a 256-char lowercase hex char0_q4_16x16 field
+    // exclusively to firstCharFamily skills (e.g. 春ウマ娘○, 夏ウマ娘○, 右回り○, 左回り○),
+    // keeps templates.glyphs undefined, and initializes cleanly when char0_q4_16x16 is omitted.
+    assert.equal(templates.glyphs, undefined, 'templates.json must keep glyphs undefined');
+
+    const suffixFirstChars = new Map();
+    for (const s of templates.skills) {
+      if (s.name.length >= 3) {
+        const suf1 = s.name.slice(1);
+        let chars = suffixFirstChars.get(suf1);
+        if (!chars) {
+          chars = new Set();
+          suffixFirstChars.set(suf1, chars);
+        }
+        chars.add(s.name[0]);
+      }
+    }
+
+    for (const name of ['春ウマ娘○', '夏ウマ娘○', '右回り○', '左回り○']) {
+      const entry = templates.skills.find((s) => s.name === name);
+      assert.ok(entry, `templates.skills must contain ${name}`);
+      assert.match(
+        entry.char0_q4_16x16 ?? '',
+        /^[0-9a-f]{256}$/,
+        `${name} must have 256-char lowercase hex char0_q4_16x16`
+      );
+    }
+
+    const nonFamilySkill = templates.skills.find((s) => s.name === 'コーナー巧者○');
+    assert.ok(nonFamilySkill, 'templates.skills must contain コーナー巧者○');
+    assert.equal(
+      nonFamilySkill.char0_q4_16x16,
+      undefined,
+      'Non-family skill コーナー巧者○ must not have char0_q4_16x16'
+    );
+
+    for (const s of templates.skills) {
+      const isFirstCharFamily =
+        s.name.length >= 3 && (suffixFirstChars.get(s.name.slice(1))?.size ?? 0) >= 2;
+      if (isFirstCharFamily) {
+        assert.match(
+          s.char0_q4_16x16 ?? '',
+          /^[0-9a-f]{256}$/,
+          `firstCharFamily skill ${s.name} must have 256-char lowercase hex char0_q4_16x16`
+        );
+      } else {
+        assert.equal(
+          s.char0_q4_16x16,
+          undefined,
+          `Non-firstCharFamily skill ${s.name} must not have char0_q4_16x16`
+        );
+      }
+    }
+
+    const strippedTemplates = {
+      ...templates,
+      skills: templates.skills.map((s) => {
+        const copy = { ...s };
+        delete copy.char0_q4_16x16;
+        return copy;
+      }),
+    };
+    const legacyRecognizer = new ImageRecognizer(strippedTemplates);
+    assert.equal(
+      legacyRecognizer.getTableStats().skills,
+      new ImageRecognizer(templates).getTableStats().skills,
+      'ImageRecognizer must initialize cleanly without char0_q4_16x16 (backward compatibility)'
+    );
+  });
 });
 
 // 11. CaptureManager 60FPS フレーム供給・直接 ImageBitmap クロップ・ライブ検証のテスト

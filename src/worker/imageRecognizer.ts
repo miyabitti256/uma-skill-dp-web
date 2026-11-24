@@ -70,6 +70,7 @@ export interface TemplatesData {
     feature_128b: string;
     head_64b: string;
     tail_64b: string;
+    char0_q4_16x16?: string;
     need_pt?: number;
     rarity?: number;
     valid_costs?: number[];
@@ -469,6 +470,317 @@ function parseHexBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+interface Char0ZnccTemplate {
+  gray: Float32Array;
+  gx: Float32Array;
+  gy: Float32Array;
+}
+
+interface Char0PaddedGrid {
+  g20: Float32Array;
+  gx20: Float32Array;
+  gy20: Float32Array;
+}
+
+function normalizeZeroMean(arr: Float32Array): Float32Array {
+  const n = arr.length;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    sum += arr[i];
+  }
+  const mean = sum / n;
+  const out = new Float32Array(n);
+  let varSum = 0;
+  for (let i = 0; i < n; i++) {
+    const d = arr[i] - mean;
+    out[i] = d;
+    varSum += d * d;
+  }
+  const invNorm = varSum > 1e-6 ? 1.0 / Math.sqrt(varSum) : 0;
+  for (let i = 0; i < n; i++) {
+    out[i] *= invNorm;
+  }
+  return out;
+}
+
+function sobel16x16(img: Float32Array): { gx: Float32Array; gy: Float32Array } {
+  const gx = new Float32Array(256);
+  const gy = new Float32Array(256);
+  for (let y = 1; y < 15; y++) {
+    for (let x = 1; x < 15; x++) {
+      const i = y * 16 + x;
+      gx[i] =
+        img[(y - 1) * 16 + (x + 1)] +
+        2 * img[y * 16 + (x + 1)] +
+        img[(y + 1) * 16 + (x + 1)] -
+        (img[(y - 1) * 16 + (x - 1)] +
+          2 * img[y * 16 + (x - 1)] +
+          img[(y + 1) * 16 + (x - 1)]);
+      gy[i] =
+        img[(y + 1) * 16 + (x - 1)] +
+        2 * img[(y + 1) * 16 + x] +
+        img[(y + 1) * 16 + (x + 1)] -
+        (img[(y - 1) * 16 + (x - 1)] +
+          2 * img[(y - 1) * 16 + x] +
+          img[(y - 1) * 16 + (x + 1)]);
+    }
+  }
+  return { gx: normalizeZeroMean(gx), gy: normalizeZeroMean(gy) };
+}
+
+function parseChar0Q4Zncc(hex: string): Char0ZnccTemplate | undefined {
+  if (hex.length !== 256) return undefined;
+  const raw = new Float32Array(256);
+  for (let i = 0; i < 256; i++) {
+    const q = parseInt(hex[i], 16);
+    if (Number.isNaN(q)) return undefined;
+    raw[i] = q * 17;
+  }
+  const { gx, gy } = sobel16x16(raw);
+  return { gray: normalizeZeroMean(raw), gx, gy };
+}
+
+function resizeAreaFloatSubRect(
+  src: Float32Array,
+  srcW: number,
+  srcH: number,
+  rx0: number,
+  ry0: number,
+  rw: number,
+  rh: number,
+  dstW: number,
+  dstH: number
+): Float32Array {
+  const dst = new Float32Array(dstW * dstH);
+  const xStep = rw / dstW;
+  const yStep = rh / dstH;
+  const cellArea = xStep * yStep;
+  if (cellArea <= 0) return dst;
+  const invCellArea = 1.0 / cellArea;
+
+  for (let dy = 0; dy < dstH; dy++) {
+    const sy0f = ry0 + dy * yStep;
+    const sy1f = ry0 + (dy + 1) * yStep;
+    const sy0 = Math.max(0, Math.floor(sy0f));
+    const sy1 = Math.min(srcH, Math.ceil(sy1f));
+    if (sy0 >= sy1) continue;
+
+    for (let dx = 0; dx < dstW; dx++) {
+      const sx0f = rx0 + dx * xStep;
+      const sx1f = rx0 + (dx + 1) * xStep;
+      const sx0 = Math.max(0, Math.floor(sx0f));
+      const sx1 = Math.min(srcW, Math.ceil(sx1f));
+      if (sx0 >= sx1) continue;
+
+      let ws = 0;
+      for (let sy = sy0; sy < sy1; sy++) {
+        const yw = Math.min(sy + 1, sy1f) - Math.max(sy, sy0f);
+        if (yw <= 0) continue;
+        const rowOff = sy * srcW;
+        for (let sx = sx0; sx < sx1; sx++) {
+          const xw = Math.min(sx + 1, sx1f) - Math.max(sx, sx0f);
+          if (xw <= 0) continue;
+          ws += src[rowOff + sx] * (xw * yw);
+        }
+      }
+      // Why divide by full cellArea: ストリップ範囲外はインク強度 0 として扱うため、部分クランプによるスケール歪みを防ぐ
+      dst[dy * dstW + dx] = ws * invCellArea;
+    }
+  }
+  return dst;
+}
+
+function extractChar0PaddedGrids(
+  cardData: Uint8Array,
+  cw: number,
+  ch: number,
+  isCompact: boolean
+): Char0PaddedGrid[] | null {
+  const ty1 = isCompact ? Math.floor(ch * 0.15) : Math.floor(ch * 0.095);
+  const ty2 = isCompact ? Math.floor(ch * 0.42) : Math.floor(ch * 0.23);
+  const tx1 = Math.floor(cw * 0.165);
+  const tx2 = Math.floor(cw * 0.85);
+  const stripW = tx2 - tx1;
+  const stripH = ty2 - ty1;
+  if (stripW <= 10 || stripH <= 6) return null;
+
+  const grays = new Float32Array(stripW * stripH);
+  const hist = new Int32Array(256);
+  let histTotal = 0;
+  for (let y = 0; y < stripH; y++) {
+    const rowOff = (ty1 + y) * cw;
+    const dstOff = y * stripW;
+    for (let x = 0; x < stripW; x++) {
+      const idx = (rowOff + tx1 + x) * 4;
+      const r = cardData[idx];
+      const g = cardData[idx + 1];
+      const b = cardData[idx + 2];
+      // Why exclude purple badge pixels from histogram: 紫バッジが暗い側ビンを水増しして bgGray を歪めるのを防ぐ
+      if (b > 110 && b > g + 15 && r > g + 10) {
+        grays[dstOff + x] = -1;
+        continue;
+      }
+      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      grays[dstOff + x] = gray;
+      hist[Math.max(0, Math.min(255, Math.round(gray)))]++;
+      histTotal++;
+    }
+  }
+  if (histTotal === 0) return null;
+
+  let bgGray = 238;
+  const target = Math.floor(histTotal * 0.88);
+  let acc = 0;
+  for (let v = 0; v < 256; v++) {
+    acc += hist[v];
+    if (acc > target) {
+      bgGray = v;
+      break;
+    }
+  }
+
+  const ink = new Float32Array(stripW * stripH);
+  const colMax = new Float32Array(stripW);
+  let peakInk = 0;
+  for (let y = 0; y < stripH; y++) {
+    const rowOff = y * stripW;
+    for (let x = 0; x < stripW; x++) {
+      const gVal = grays[rowOff + x];
+      const v = gVal < 0 ? 0 : Math.max(0, bgGray - gVal);
+      ink[rowOff + x] = v;
+      if (v > colMax[x]) colMax[x] = v;
+      if (v > peakInk) peakInk = v;
+    }
+  }
+  if (peakInk < 20) return null;
+
+  let firstCol = -1;
+  const colThresh = peakInk * 0.28;
+  for (let x = 0; x < stripW; x++) {
+    if (colMax[x] >= colThresh) {
+      firstCol = x;
+      break;
+    }
+  }
+  if (firstCol === -1) return null;
+
+  const probeW = Math.min(stripW - firstCol, Math.max(8, Math.round(stripH * 0.85)));
+  const rowE = new Float32Array(stripH);
+  let maxRowE = 0;
+  for (let y = 0; y < stripH; y++) {
+    const rowOff = y * stripW + firstCol;
+    let s = 0;
+    for (let x = 0; x < probeW; x++) {
+      s += ink[rowOff + x];
+    }
+    rowE[y] = s;
+    if (s > maxRowE) maxRowE = s;
+  }
+  if (maxRowE <= 0) return null;
+
+  let y0 = -1;
+  let y1 = -1;
+  const rowThresh = maxRowE * 0.18;
+  for (let y = 0; y < stripH; y++) {
+    if (rowE[y] >= rowThresh) {
+      if (y0 === -1) y0 = y;
+      y1 = y;
+    }
+  }
+  if (y0 === -1) return null;
+
+  const coreH = Math.max(6, y1 - y0 + 1);
+  const grids: Char0PaddedGrid[] = [];
+  const wMults = isCompact ? [1.0, 1.14] : [0.98, 1.08];
+  for (const wMult of wMults) {
+    const charW = coreH * wMult;
+    const padX = charW * 0.125;
+    const padY = coreH * 0.125;
+    const rx0 = firstCol - padX;
+    const ry0 = y0 - padY;
+    const rw = charW + padX * 2;
+    const rh = coreH + padY * 2;
+    if (rw < 6 || rh < 6) continue;
+
+    // Why non-clamped 1.25x subrect sampling: ストリップ端でクランプするとパディングが片側 0 になり
+    // 文字本体が 16px スケールから溢れて ZNCC 2D 位置合わせで歪むため、範囲外を 0 扱いのまま厳密 1.25x を維持する
+    const g20 = resizeAreaFloatSubRect(ink, stripW, stripH, rx0, ry0, rw, rh, 20, 20);
+    const gx20 = new Float32Array(400);
+    const gy20 = new Float32Array(400);
+    for (let y = 1; y < 19; y++) {
+      for (let x = 1; x < 19; x++) {
+        const i = y * 20 + x;
+        gx20[i] =
+          g20[(y - 1) * 20 + (x + 1)] +
+          2 * g20[y * 20 + (x + 1)] +
+          g20[(y + 1) * 20 + (x + 1)] -
+          (g20[(y - 1) * 20 + (x - 1)] +
+            2 * g20[y * 20 + (x - 1)] +
+            g20[(y + 1) * 20 + (x - 1)]);
+        gy20[i] =
+          g20[(y + 1) * 20 + (x - 1)] +
+          2 * g20[(y + 1) * 20 + x] +
+          g20[(y + 1) * 20 + (x + 1)] -
+          (g20[(y - 1) * 20 + (x - 1)] +
+            2 * g20[(y - 1) * 20 + x] +
+            g20[(y - 1) * 20 + (x + 1)]);
+      }
+    }
+    grids.push({ g20, gx20, gy20 });
+  }
+  return grids.length > 0 ? grids : null;
+}
+
+function zncc20x16Combined(grids: Char0PaddedGrid[], tmpl: Char0ZnccTemplate): number {
+  let best = -1;
+  const tGray = tmpl.gray;
+  const tGx = tmpl.gx;
+  const tGy = tmpl.gy;
+  for (const { g20, gx20, gy20 } of grids) {
+    for (let dy = 0; dy <= 4; dy++) {
+      for (let dx = 0; dx <= 4; dx++) {
+        let sg = 0;
+        let qg = 0;
+        let dg = 0;
+        let sx = 0;
+        let qx = 0;
+        let dxDot = 0;
+        let sy = 0;
+        let qy = 0;
+        let dyDot = 0;
+        for (let y = 0; y < 16; y++) {
+          const gOff = (dy + y) * 20 + dx;
+          const tOff = y * 16;
+          for (let x = 0; x < 16; x++) {
+            const vg = g20[gOff + x];
+            sg += vg;
+            qg += vg * vg;
+            dg += vg * tGray[tOff + x];
+            const vx = gx20[gOff + x];
+            const vy = gy20[gOff + x];
+            sx += vx;
+            qx += vx * vx;
+            dxDot += vx * tGx[tOff + x];
+            sy += vy;
+            qy += vy * vy;
+            dyDot += vy * tGy[tOff + x];
+          }
+        }
+        const vgVar = qg - (sg * sg) / 256;
+        if (vgVar <= 1e-6) continue;
+        const zGray = dg / Math.sqrt(vgVar);
+        const vxVar = qx - (sx * sx) / 256;
+        const vyVar = qy - (sy * sy) / 256;
+        const zGx = vxVar > 1e-6 ? dxDot / Math.sqrt(vxVar) : 0;
+        const zGy = vyVar > 1e-6 ? dyDot / Math.sqrt(vyVar) : 0;
+        const score = 0.5 * zGray + 0.25 * zGx + 0.25 * zGy;
+        if (score > best) best = score;
+      }
+    }
+  }
+  return best;
+}
+
 export class ImageRecognizer {
   private templates: TemplatesData;
   private initDurationMs = 0;
@@ -485,6 +797,7 @@ export class ImageRecognizer {
     need_pt: number;
     rarity: number;
     validCosts: Set<number>;
+    char0Zncc?: Char0ZnccTemplate;
   }[] = [];
   private firstCharFamilyMap: Map<string, (typeof this.skillTable)[0][]> = new Map();
   private racecourseFamilyMap: Map<string, (typeof this.skillTable)[0][]> = new Map();
@@ -521,6 +834,7 @@ export class ImageRecognizer {
       throw new Error('templates.skills is required to initialize ImageRecognizer');
     }
 
+    const char0ZnccCache = new Map<string, Char0ZnccTemplate>();
     for (const s of templates.skills) {
       // 獲得不可・無効スキルの除外 (ハルシネーション防止)
       if (s.rarity === 6) continue;
@@ -536,6 +850,16 @@ export class ImageRecognizer {
       const headBytes = parseHexBytes(s.head_64b);
       const tailBytes = parseHexBytes(s.tail_64b);
       const validCosts = new Set<number>(s.valid_costs || []);
+      let char0Zncc: Char0ZnccTemplate | undefined;
+      if (s.char0_q4_16x16) {
+        char0Zncc = char0ZnccCache.get(s.char0_q4_16x16);
+        if (!char0Zncc) {
+          char0Zncc = parseChar0Q4Zncc(s.char0_q4_16x16);
+          if (char0Zncc) {
+            char0ZnccCache.set(s.char0_q4_16x16, char0Zncc);
+          }
+        }
+      }
 
       this.skillTable.push({
         id: s.id,
@@ -550,6 +874,7 @@ export class ImageRecognizer {
         need_pt: s.need_pt || 0,
         rarity: s.rarity ?? 0,
         validCosts,
+        char0Zncc,
       });
     }
 
@@ -1997,12 +2322,55 @@ export class ImageRecognizer {
     cardState: 'unselected' | 'selected' | 'acquired' = isUnselected ? 'unselected' : 'acquired',
     isRainbowCard: boolean = cardState === 'acquired'
   ): { skillId: number; name: string; rarity: number; dist: number } {
+    let bgGray = 238;
+    if (isUnselected) {
+      const ty1 = isCompact ? Math.floor(ch * 0.15) : Math.floor(ch * 0.095);
+      const ty2 = isCompact ? Math.floor(ch * 0.42) : Math.floor(ch * 0.23);
+      const tx1 = Math.floor(cw * 0.165);
+      const tx2 = Math.floor(cw * 0.85);
+      const stripW = tx2 - tx1;
+      const stripH = ty2 - ty1;
+      if (stripW <= 0 || stripH <= 0) {
+        return { skillId: 0, name: 'Unknown', rarity: 0, dist: 9999 };
+      }
+
+      // Why contrast-relative thresholding via 256-bin histogram (excluding purple badges):
+      // 固定閾値 (140/160) は解像度スケール・色空間デコード差・輝度低下時に細線欠けや太字滲みを招くため、
+      // 文字ストリップの背景輝度(90%tile)を基準に相対二値化閾値を決定する。
+      const hist = new Int32Array(256);
+      let sampleCount = 0;
+      for (let y = 0; y < stripH; y += 2) {
+        const rowOffset = (ty1 + y) * cw;
+        for (let x = 0; x < stripW; x += 2) {
+          const idx = (rowOffset + (tx1 + x)) * 4;
+          const r = cardData[idx];
+          const g = cardData[idx + 1];
+          const b = cardData[idx + 2];
+          if (b > 110 && b > g + 15 && r > g + 10) continue;
+          const gray = Math.max(0, Math.min(255, Math.round(0.299 * r + 0.587 * g + 0.114 * b)));
+          hist[gray]++;
+          sampleCount++;
+        }
+      }
+      if (sampleCount > 0) {
+        const target = Math.floor(sampleCount * 0.9);
+        let acc = 0;
+        for (let v = 0; v < 256; v++) {
+          acc += hist[v];
+          if (acc > target) {
+            bgGray = v;
+            break;
+          }
+        }
+      }
+    }
+
     const primaryThresh = isUnselected
       ? cw < 450
-        ? 160
-        : isCompact || isGoldCard
+        ? Math.min(185, bgGray - 78)
+        : isGoldCard
           ? 155
-          : 140
+          : Math.min(175, bgGray - 96)
       : 115;
     const primary = this.matchCardSkillNameWithThresh(
       cardData,
@@ -2016,35 +2384,31 @@ export class ImageRecognizer {
       isRainbowCard,
       primaryThresh
     );
-    // Why not uniform 155 or retrying XOR-rejected frames: uniform 155 shifts 1px crop bounds on clear
-    // frames (e.g. 京都レース場○) and flips ambiguous scroll-blur XOR ties (春ウマ娘○ -> 夏ウマ娘○).
-    // Retrying with 155 only when 140 fails before/at maxDist recovers 1080p subpixel stroke dropouts
-    // (危険回避/直滑降/揺るがぬ信念/右回り○) with zero FP regressions.
-    if (
-      primary.canFallbackRetry &&
-      !isCompact &&
-      isUnselected &&
-      !isGoldCard &&
-      cw >= 450
-    ) {
-      const retry = this.matchCardSkillNameWithThresh(
-        cardData,
-        cw,
-        ch,
-        isCompact,
-        needSp,
-        isUnselected,
-        isGoldCard,
-        cardState,
-        isRainbowCard,
-        155
-      );
-      return {
-        skillId: retry.skillId,
-        name: retry.name,
-        rarity: retry.rarity,
-        dist: retry.dist,
-      };
+    // Why not retrying XOR/ZNCC-rejected frames: 曖昧文字やマージン不足のフレームで閾値を緩めて別文字へ化けるのを防ぐため、
+    // maxDist 超過・パッチ抽出失敗 (canFallbackRetry=true) のみコントラスト相対リトライを行う。
+    if (primary.canFallbackRetry && isUnselected && !isGoldCard) {
+      const altThresh =
+        cw < 450 ? Math.min(175, bgGray - 96) : Math.min(185, bgGray - 81);
+      if (altThresh !== primaryThresh) {
+        const retry = this.matchCardSkillNameWithThresh(
+          cardData,
+          cw,
+          ch,
+          isCompact,
+          needSp,
+          isUnselected,
+          isGoldCard,
+          cardState,
+          isRainbowCard,
+          altThresh
+        );
+        return {
+          skillId: retry.skillId,
+          name: retry.name,
+          rarity: retry.rarity,
+          dist: retry.dist,
+        };
+      }
     }
     return {
       skillId: primary.skillId,
@@ -2266,7 +2630,7 @@ export class ImageRecognizer {
 
     // 直近カード特徴量キャッシュ照合 (静止・低速スクロール時の再照合をスキップ)
     const fullHash = fnv1aHash(fullBytes);
-    const cacheKey = `${fullHash}_${needSp}_${isGoldCard ? 1 : 0}_${isCompact ? 1 : 0}_${isUnselected ? 1 : 0}_${cardState}_${isRainbowCard ? 1 : 0}_${cw < 450 ? 1 : 0}_${isDoubleCircle ? 1 : 0}_${Math.round(aspect * 100)}`;
+    const cacheKey = `${fullHash}_${needSp}_${isGoldCard ? 1 : 0}_${isCompact ? 1 : 0}_${isUnselected ? 1 : 0}_${cardState}_${isRainbowCard ? 1 : 0}_${cw < 450 ? 1 : 0}_${isDoubleCircle ? 1 : 0}_${Math.round(aspect * 100)}_${binThresh}`;
     const cachedCard = this.cardNameCache.get(cacheKey);
     if (cachedCard && bytesEqual(cachedCard.fullBytes, fullBytes)) {
       return cachedCard.result;
@@ -2285,6 +2649,7 @@ export class ImageRecognizer {
     }
 
     const headVariants: Uint8Array[] = [];
+    const headZeroVariants: Uint8Array[] = [];
     for (const hw of hwList) {
       const headW = Math.min(cropW, Math.max(1, hw));
       let minY = cropH;
@@ -2307,6 +2672,7 @@ export class ImageRecognizer {
       }
       const resizedHead = resizeArea(headCrop, headW, effH, 32, 16);
       const headBytes = packBits(resizedHead);
+      headZeroVariants.push(headBytes);
       headVariants.push(
         headBytes,
         shiftBits(headBytes, 4, 16, -1),
@@ -2619,68 +2985,120 @@ export class ImageRecognizer {
 
     // Pairwise XOR Disambiguation (同族スキルファミリ検証 & 1位・2位競合の差分ビット支持度検証)
     let xorVerified = false;
+    let isFirstCharFamilyBranch = false;
     if (bestSkill) {
-      const suf1 = bestSkill.name.length >= 3 ? bestSkill.name.slice(1) : '';
+      const anchorSkill = bestSkill;
+      const suf1 = anchorSkill.name.length >= 3 ? anchorSkill.name.slice(1) : '';
       const firstCharSiblings = this.firstCharFamilyMap.get(suf1);
-      const isRacecourse = bestSkill.name.endsWith('レース場○') || bestSkill.name.endsWith('レース場◎');
+      const isRacecourse =
+        anchorSkill.name.endsWith('レース場○') || anchorSkill.name.endsWith('レース場◎');
 
       if (firstCharSiblings && firstCharSiblings.length > 1) {
-        // 先頭1文字のみが異なる同族スキル（例: 春ウマ娘○ vs 夏ウマ娘○、右回り○ vs 左回り○）
-        let minBestH0 = 99999;
-        let bestChar0Var = headVariants[0];
-        for (const hv of headVariants) {
-          let h0 = 0;
-          for (let y = 0; y < 16; y++) {
-            const rowOff = y * 4;
-            h0 +=
-              POPCNT8[hv[rowOff] ^ bestSkill.headBytes[rowOff]] +
-              POPCNT8[hv[rowOff + 1] ^ bestSkill.headBytes[rowOff + 1]];
+        isFirstCharFamilyBranch = true;
+        const filteredSiblings = firstCharSiblings.filter((sib) => {
+          if (anchorSkill.name.endsWith('◎') !== sib.name.endsWith('◎')) return false;
+          if (anchorSkill.name.endsWith('○') !== sib.name.endsWith('○')) return false;
+          if (sib.rarity !== anchorSkill.rarity) return false;
+          if (cardState === 'acquired' && isRainbowCard) {
+            if (sib.rarity <= 2 && sib.id >= 900000 && sib.id < 1000000) return false;
+          } else if (sib.rarity >= 3 || sib.validCosts.size === 0) {
+            return false;
           }
-          if (h0 < minBestH0) {
-            minBestH0 = h0;
-            bestChar0Var = hv;
+          return true;
+        });
+
+        if (filteredSiblings.length >= 2 && filteredSiblings.every((sib) => sib.char0Zncc !== undefined)) {
+          // Why Stage 2 continuous grayscale + Sobel ZNCC without validCosts pre-filtering:
+          // 1bit二値化では 春/夏 や 右/左 等の微細ストローク差が量子化・スクロールブラーで消失するため、
+          // 連続グレースケール＋Sobel勾配の2D位置合わせZNCCで先頭文字を競わせる。
+          // validCostsで事前除外するとSP誤読時に本物文字が除外されて別兄弟へ化けるため、
+          // 純粋な画像形状の勝者を後段の既存validCostsゲートで検証する。
+          // Why not storeCache here: Stage 2 は二値化前の連続グレースケールを参照するため、
+          // 二値化 fullBytes キーの cardNameCache へ保存すると異なる連続輝度フレームを誤キャッシュする。
+          const grids = extractChar0PaddedGrids(cardData, cw, ch, isCompact);
+          if (!grids) {
+            return UNKNOWN;
           }
-        }
-        for (const sib of firstCharSiblings) {
-          if (sib.id === bestSkill.id) continue;
-          let minSibH0 = 99999;
-          for (const hv of headVariants) {
+          let top1 = -2;
+          let top2 = -2;
+          let topSkill: (typeof this.skillTable)[0] | null = null;
+          for (const sib of filteredSiblings) {
+            const tmpl = sib.char0Zncc;
+            if (!tmpl) continue;
+            const sc = zncc20x16Combined(grids, tmpl);
+            if (sc > top1) {
+              top2 = top1;
+              top1 = sc;
+              topSkill = sib;
+            } else if (sc > top2) {
+              top2 = sc;
+            }
+          }
+          if (!topSkill || top1 < 0.50 || top1 - top2 < 0.03) {
+            return UNKNOWN;
+          }
+          bestSkill = topSkill;
+          xorVerified = true;
+        } else if (filteredSiblings.length >= 2) {
+          // Why 1-bit XOR fallback when char0Zncc is missing:
+          // char0_q4_16x16 を持たないテスト用モック等との後方互換を維持する。
+          const char0Variants = cw >= 450 ? headZeroVariants : headVariants;
+          let minBestH0 = 99999;
+          let bestChar0Var = char0Variants[0];
+          for (const hv of char0Variants) {
             let h0 = 0;
             for (let y = 0; y < 16; y++) {
               const rowOff = y * 4;
               h0 +=
-                POPCNT8[hv[rowOff] ^ sib.headBytes[rowOff]] +
-                POPCNT8[hv[rowOff + 1] ^ sib.headBytes[rowOff + 1]];
+                POPCNT8[hv[rowOff] ^ anchorSkill.headBytes[rowOff]] +
+                POPCNT8[hv[rowOff + 1] ^ anchorSkill.headBytes[rowOff + 1]];
             }
-            if (h0 < minSibH0) {
-              minSibH0 = h0;
+            if (h0 < minBestH0) {
+              minBestH0 = h0;
+              bestChar0Var = hv;
             }
           }
-          if (minSibH0 <= minBestH0) {
-            return storeCache(UNKNOWN);
-          }
+          for (const sib of filteredSiblings) {
+            if (sib.id === anchorSkill.id) continue;
+            let minSibH0 = 99999;
+            for (const hv of char0Variants) {
+              let h0 = 0;
+              for (let y = 0; y < 16; y++) {
+                const rowOff = y * 4;
+                h0 +=
+                  POPCNT8[hv[rowOff] ^ sib.headBytes[rowOff]] +
+                  POPCNT8[hv[rowOff + 1] ^ sib.headBytes[rowOff + 1]];
+              }
+              if (h0 < minSibH0) {
+                minSibH0 = h0;
+              }
+            }
+            if (minSibH0 <= minBestH0) {
+              return UNKNOWN;
+            }
 
-          let bestChar0Supp = 0;
-          let sibChar0Supp = 0;
-          for (let y = 0; y < 16; y++) {
-            const rowOff = y * 4;
-            for (let b = 0; b < 2; b++) {
-              const diffMask = bestSkill.headBytes[rowOff + b] ^ sib.headBytes[rowOff + b];
-              if (diffMask === 0) continue;
-              const imgB = bestChar0Var[rowOff + b];
-              bestChar0Supp += POPCNT8[~(imgB ^ bestSkill.headBytes[rowOff + b]) & diffMask & 0xff];
-              sibChar0Supp += POPCNT8[~(imgB ^ sib.headBytes[rowOff + b]) & diffMask & 0xff];
+            let bestChar0Supp = 0;
+            let sibChar0Supp = 0;
+            for (let y = 0; y < 16; y++) {
+              const rowOff = y * 4;
+              for (let b = 0; b < 2; b++) {
+                const diffMask = anchorSkill.headBytes[rowOff + b] ^ sib.headBytes[rowOff + b];
+                if (diffMask === 0) continue;
+                const imgB = bestChar0Var[rowOff + b];
+                bestChar0Supp += POPCNT8[~(imgB ^ anchorSkill.headBytes[rowOff + b]) & diffMask & 0xff];
+                sibChar0Supp += POPCNT8[~(imgB ^ sib.headBytes[rowOff + b]) & diffMask & 0xff];
+              }
+            }
+            const totalChar0Diff = bestChar0Supp + sibChar0Supp;
+            if (totalChar0Diff > 10) {
+              const minChar0Ratio = totalChar0Diff <= 55 ? 0.58 : 0.55;
+              if (sibChar0Supp >= bestChar0Supp || bestChar0Supp / totalChar0Diff < minChar0Ratio) {
+                return UNKNOWN;
+              }
             }
           }
-          const totalChar0Diff = bestChar0Supp + sibChar0Supp;
-          if (totalChar0Diff > 10) {
-            // 兄弟スキルの支持率が勝っている、または支持率 < 55% のときは 'Unknown' として棄却
-            if (sibChar0Supp >= bestChar0Supp || bestChar0Supp / totalChar0Diff < 0.55) {
-              return storeCache(UNKNOWN);
-            }
-          }
+          xorVerified = true;
         }
-        xorVerified = true;
       } else if (isRacecourse) {
         // レース場同族スキル（例: 京都レース場○ vs 東京レース場○）
         const rcSuf = bestSkill.name.endsWith('レース場◎') ? 'レース場◎' : 'レース場○';
@@ -2776,7 +3194,7 @@ export class ImageRecognizer {
     }
 
     if (bestSkill && !xorVerified && bestDist > 165 && secondBestDist - bestDist <= 22) {
-      return storeCache(UNKNOWN);
+      return isFirstCharFamilyBranch ? UNKNOWN : storeCache(UNKNOWN);
     }
 
     // Why not: 照合ループ内で除外すると SP 誤読時に他スキルへハルシネーションするため、最良候補確定後に事後検証し不一致時は他候補へ乗り換えずに Unknown とする
@@ -2787,14 +3205,13 @@ export class ImageRecognizer {
       needSp > 0 &&
       (bestSkill.validCosts.size === 0 || !bestSkill.validCosts.has(needSp))
     ) {
-      return storeCache(UNKNOWN);
+      return isFirstCharFamilyBranch ? UNKNOWN : storeCache(UNKNOWN);
     }
 
-    return storeCache(
-      bestSkill
-        ? { skillId: bestSkill.id, name: bestSkill.name, rarity: bestSkill.rarity, dist: bestDist }
-        : UNKNOWN
-    );
+    const finalResult = bestSkill
+      ? { skillId: bestSkill.id, name: bestSkill.name, rarity: bestSkill.rarity, dist: bestDist }
+      : UNKNOWN;
+    return isFirstCharFamilyBranch ? finalResult : storeCache(finalResult);
   }
 
   /**
